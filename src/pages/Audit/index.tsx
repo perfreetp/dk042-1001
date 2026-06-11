@@ -22,6 +22,8 @@ import {
   History,
   Paperclip,
   MessageSquare,
+  SlidersHorizontal,
+  Tag,
 } from 'lucide-react';
 import StatCard from '@/components/StatCard';
 import StatusBadge from '@/components/StatusBadge';
@@ -30,10 +32,10 @@ import { useAuditStore } from '@/store';
 import { useEmissionStore } from '@/store';
 import { useEnterpriseStore } from '@/store';
 import { useUIStore } from '@/store/ui';
-import { calculateEmission } from '@/utils/calculator';
+import { calculateEmissionWithVersion } from '@/utils/calculator';
 import { formatEmission, formatDateTime, formatNumber } from '@/utils/formatter';
 import { cn } from '@/lib/utils';
-import type { EmissionData, EmissionStatus, AuditRecord as AuditRecordType, Attachment, Enterprise } from '@/types';
+import type { EmissionData, EmissionStatus, AuditRecord as AuditRecordType, Attachment, EmissionFactorKey } from '@/types';
 
 const STATUS_FILTERS: { value: EmissionStatus | ''; label: string }[] = [
   { value: '', label: '全部状态' },
@@ -41,18 +43,6 @@ const STATUS_FILTERS: { value: EmissionStatus | ''; label: string }[] = [
   { value: 'approved', label: '已通过' },
   { value: 'rejected', label: '已退回' },
   { value: 'locked', label: '已锁定' },
-];
-
-const INDUSTRY_FILTERS = [
-  { value: '', label: '全部行业' },
-  { value: '化工制造', label: '化工制造' },
-  { value: '电子制造', label: '电子制造' },
-  { value: '机械加工', label: '机械加工' },
-  { value: '食品加工', label: '食品加工' },
-  { value: '纺织印染', label: '纺织印染' },
-  { value: '医药制造', label: '医药制造' },
-  { value: '汽车零部件', label: '汽车零部件' },
-  { value: '新能源', label: '新能源' },
 ];
 
 function getMonths(): string[] {
@@ -81,8 +71,39 @@ interface HistoryCompareItem {
   changeRate: number | null;
 }
 
+const ACTION_META: Record<AuditRecordType['action'], { label: string; bg: string; icon: any; text: string; dot: string }> = {
+  submit: {
+    label: '提交',
+    bg: 'bg-zinc-100',
+    icon: Clock,
+    text: 'text-zinc-700',
+    dot: 'bg-zinc-100 text-zinc-600',
+  },
+  approve: {
+    label: '审核通过',
+    bg: 'bg-green-100 text-green-700',
+    icon: CheckCircle2,
+    text: 'text-green-700',
+    dot: 'bg-green-100 text-green-600',
+  },
+  reject: {
+    label: '审核退回',
+    bg: 'bg-red-100 text-red-700',
+    icon: XCircle,
+    text: 'text-red-700',
+    dot: 'bg-red-100 text-red-600',
+  },
+  lock: {
+    label: '锁定周期',
+    bg: 'bg-purple-100 text-purple-700',
+    icon: Lock,
+    text: 'text-purple-700',
+    dot: 'bg-purple-100 text-purple-600',
+  },
+};
+
 export default function Audit() {
-  const { approve, reject, batchApprove, lockPeriod, batchLock, getAttachments, auditRecords } = useAuditStore();
+  const { approve, reject, batchApprove, lockPeriod, batchLock, getAttachments, getRecordsForEmission } = useAuditStore();
   const { addToast } = useUIStore();
   const { emissionData, getEnterpriseAllData } = useEmissionStore();
   const { enterprises, getEnterpriseById } = useEnterpriseStore();
@@ -95,6 +116,15 @@ export default function Audit() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedData, setSelectedData] = useState<EmissionData | null>(null);
   const [auditOpinion, setAuditOpinion] = useState('');
+  const [localAppendedRecords, setLocalAppendedRecords] = useState<Map<string, AuditRecordType[]>>(new Map());
+
+  const INDUSTRY_FILTERS = useMemo(() => {
+    const unique = Array.from(new Set(enterprises.map((e) => e.industry).filter(Boolean)));
+    return [
+      { value: '', label: '全部行业' },
+      ...unique.map((i) => ({ value: i, label: i })),
+    ];
+  }, [enterprises]);
 
   const stats = useMemo(() => {
     return {
@@ -132,13 +162,25 @@ export default function Audit() {
     setAuditOpinion('');
   };
 
+  const appendLocalRecord = (emissionDataId: string, record: AuditRecordType) => {
+    setLocalAppendedRecords((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(emissionDataId) || [];
+      next.set(emissionDataId, [...existing, record]);
+      return next;
+    });
+  };
+
   const handleApprove = () => {
     if (!selectedData) return;
     if (selectedData.status !== 'pending') {
       addToast('只有待审核状态的数据才能审核通过', 'warning');
       return;
     }
-    approve(selectedData.id, '审核员', auditOpinion || undefined);
+    const newRecord = approve(selectedData.id, '审核员', auditOpinion || undefined);
+    if (newRecord) {
+      appendLocalRecord(selectedData.id, newRecord);
+    }
     addToast('已审核通过', 'success');
     setSelectedData((prev) =>
       prev ? { ...prev, status: 'approved', auditOpinion: auditOpinion || undefined, auditor: '审核员' } : null
@@ -155,7 +197,10 @@ export default function Audit() {
       addToast('只有待审核状态的数据才能退回', 'warning');
       return;
     }
-    reject(selectedData.id, '审核员', auditOpinion);
+    const newRecord = reject(selectedData.id, '审核员', auditOpinion);
+    if (newRecord) {
+      appendLocalRecord(selectedData.id, newRecord);
+    }
     addToast('已退回，企业需要重新修正数据', 'success');
     setSelectedData((prev) =>
       prev ? { ...prev, status: 'rejected', auditOpinion, auditor: '审核员' } : null
@@ -164,9 +209,10 @@ export default function Audit() {
 
   const handleLock = () => {
     if (!selectedData) return;
-    const success = lockPeriod(selectedData.id);
+    const { success, record } = lockPeriod(selectedData.id, '审核员');
     if (success) {
-      addToast('已成功锁定该周期', 'success');
+      if (record) appendLocalRecord(selectedData.id, record);
+      addToast('已成功锁定该周期，操作已进入审核记录', 'success');
       setSelectedData((prev) => (prev ? { ...prev, status: 'locked' } : null));
     } else {
       addToast('只有已通过状态的数据才能锁定', 'warning');
@@ -200,30 +246,31 @@ export default function Audit() {
       return;
     }
 
-    const processedIds = batchLock(selectedRowKeys);
-    addToast(`已成功锁定 ${processedIds.length} 条已通过记录`, 'success');
+    const processedIds = batchLock(selectedRowKeys, '审核员');
+    addToast(`已成功锁定 ${processedIds.length} 条已通过记录，审核记录已保存`, 'success');
     setSelectedRowKeys([]);
   };
 
-  const selectedResult = selectedData ? calculateEmission(selectedData) : null;
+  const selectedResultWithVersion = selectedData ? calculateEmissionWithVersion(selectedData) : null;
+  const selectedResult = selectedResultWithVersion;
   const selectedEnterprise = selectedData ? getEnterpriseById(selectedData.enterpriseId) : null;
 
   const attachmentCount = useMemo(() => {
     if (!selectedData) return 0;
     return getAttachments(selectedData.enterpriseId, selectedData.period).length;
-  }, [selectedData, getAttachments]);
+  }, [selectedData, getAttachments, selectedData?.enterpriseId, selectedData?.period]);
 
   const attachments: Attachment[] = useMemo(() => {
     if (!selectedData) return [];
     return getAttachments(selectedData.enterpriseId, selectedData.period);
-  }, [selectedData, getAttachments]);
+  }, [selectedData, getAttachments, selectedData?.enterpriseId, selectedData?.period]);
 
   const historyComparison = useMemo((): HistoryCompareItem[] => {
     if (!selectedData) return [];
     const allData = getEnterpriseAllData(selectedData.enterpriseId).filter(
       (d) => d.status !== 'draft'
     );
-    const currentResult = calculateEmission(selectedData);
+    const currentResult = selectedResult;
 
     const periods: string[] = [];
     for (let i = 2; i >= 0; i--) {
@@ -233,13 +280,13 @@ export default function Audit() {
     return periods.map((p, idx) => {
       const d = allData.find((x) => x.period === p);
       if (d) {
-        const r = calculateEmission(d);
+        const r = calculateEmissionWithVersion(d);
         const prevPeriod = idx > 0 ? periods[idx - 1] : null;
         let changeRate: number | null = null;
         if (prevPeriod) {
           const prevD = allData.find((x) => x.period === prevPeriod);
           if (prevD) {
-            const prevR = calculateEmission(prevD);
+            const prevR = calculateEmissionWithVersion(prevD);
             if (prevR.total > 0) {
               changeRate = ((r.total - prevR.total) / prevR.total) * 100;
             }
@@ -257,15 +304,15 @@ export default function Audit() {
       }
       return {
         period: p,
-        total: p === selectedData.period ? currentResult.total : 0,
-        electricity: p === selectedData.period ? currentResult.breakdown.electricity : 0,
-        gas: p === selectedData.period ? currentResult.breakdown.gas : 0,
-        steam: p === selectedData.period ? currentResult.breakdown.steam : 0,
-        fuel: p === selectedData.period ? currentResult.breakdown.fuel : 0,
+        total: p === selectedData.period ? currentResult?.total || 0 : 0,
+        electricity: p === selectedData.period ? currentResult?.breakdown.electricity || 0 : 0,
+        gas: p === selectedData.period ? currentResult?.breakdown.gas || 0 : 0,
+        steam: p === selectedData.period ? currentResult?.breakdown.steam || 0 : 0,
+        fuel: p === selectedData.period ? currentResult?.breakdown.fuel || 0 : 0,
         changeRate: null,
       };
     });
-  }, [selectedData, getEnterpriseAllData]);
+  }, [selectedData, getEnterpriseAllData, selectedResult]);
 
   const lastMonthCompare = useMemo(() => {
     if (!selectedData || historyComparison.length < 2) return null;
@@ -285,7 +332,7 @@ export default function Audit() {
     const d = allData.find((x) => x.period === lastYearPeriod);
     if (!d) return null;
     const cur = selectedResult?.total || 0;
-    const prev = calculateEmission(d).total;
+    const prev = calculateEmissionWithVersion(d).total;
     if (prev === 0) return null;
     return {
       period: lastYearPeriod,
@@ -297,14 +344,19 @@ export default function Audit() {
 
   const relevantAuditRecords = useMemo((): AuditRecordType[] => {
     if (!selectedData) return [];
-    return auditRecords
-      .filter(
-        (r) =>
-          r.emissionDataId === selectedData.id ||
-          (r.enterpriseId === selectedData.enterpriseId && r.period === selectedData.period)
-      )
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  }, [selectedData, auditRecords]);
+    const baseRecords = getRecordsForEmission(selectedData.id);
+    const localRecords = localAppendedRecords.get(selectedData.id) || [];
+    const combined = [...baseRecords, ...localRecords];
+    const seen = new Set<string>();
+    const deduped: AuditRecordType[] = [];
+    combined.forEach((r) => {
+      if (!seen.has(r.id)) {
+        seen.add(r.id);
+        deduped.push(r);
+      }
+    });
+    return deduped.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }, [selectedData, getRecordsForEmission, localAppendedRecords, selectedData?.id]);
 
   const energyBreakdownChange = useMemo(() => {
     if (!lastMonthCompare || historyComparison.length < 2) return null;
@@ -359,7 +411,7 @@ export default function Audit() {
       key: 'totalEmission',
       title: '排放量',
       render: (record) => {
-        const r = calculateEmission(record);
+        const r = calculateEmissionWithVersion(record);
         return (
           <div className="text-center">
             <span className="font-semibold text-zinc-900">{formatEmission(r.total)}</span>
@@ -398,7 +450,8 @@ export default function Audit() {
             <>
               <button
                 onClick={() => {
-                  approve(record.id, '审核员');
+                  const r = approve(record.id, '审核员');
+                  if (r) appendLocalRecord(record.id, r);
                   addToast('已审核通过', 'success');
                 }}
                 className="p-1.5 rounded-lg hover:bg-green-50 text-zinc-600 hover:text-green-600 transition-colors"
@@ -422,8 +475,9 @@ export default function Audit() {
           {record.status === 'approved' && (
             <button
               onClick={() => {
-                lockPeriod(record.id);
-                addToast('已成功锁定该周期', 'success');
+                const { success, record: newRec } = lockPeriod(record.id, '审核员');
+                if (success && newRec) appendLocalRecord(record.id, newRec);
+                addToast(success ? '已成功锁定该周期' : '仅已通过数据可锁定', success ? 'success' : 'warning');
               }}
               className="p-1.5 rounded-lg hover:bg-purple-50 text-zinc-600 hover:text-purple-600 transition-colors"
               title="锁定周期"
@@ -457,7 +511,9 @@ export default function Audit() {
     <div className="p-6 space-y-6 relative">
       <div>
         <h1 className="text-2xl font-bold text-zinc-900">审核任务</h1>
-        <p className="text-sm text-zinc-500 mt-1">审核企业提交的碳排放数据，管理数据状态</p>
+        <p className="text-sm text-zinc-500 mt-1">
+          审核企业提交的碳排放数据，查看完整详情与历史追溯，所有操作（通过/退回/锁定）均记入审核记录
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -521,6 +577,10 @@ export default function Audit() {
               </option>
             ))}
           </select>
+          <div className="ml-auto text-xs text-zinc-500 flex items-center gap-1">
+            <MessageSquare className="w-3 h-3" />
+            操作均自动记入审核记录，可在详情侧栏追溯
+          </div>
         </div>
       </div>
 
@@ -536,7 +596,6 @@ export default function Audit() {
         pageSize={10}
       />
 
-      {/* Audit Sidebar */}
       {selectedData && sidebarOpen && (
         <>
           <div
@@ -547,7 +606,7 @@ export default function Audit() {
             <div className="sticky top-0 bg-white border-b border-zinc-200 px-6 py-4 z-10">
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="flex items-center gap-3 mb-2">
+                  <div className="flex items-center gap-3 mb-2 flex-wrap">
                     <h2 className="text-xl font-bold text-zinc-900">审核详情</h2>
                     {selectedData && <StatusBadge status={selectedData.status} />}
                   </div>
@@ -566,7 +625,6 @@ export default function Audit() {
 
             {selectedResult && (
               <div className="p-6 space-y-6">
-                {/* Basic Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <span className="text-xs text-zinc-500">企业规模</span>
@@ -595,7 +653,29 @@ export default function Audit() {
                   </div>
                 </div>
 
-                {/* Emission Summary */}
+                {selectedResultWithVersion && (
+                  <div className="p-3 rounded-lg bg-gradient-to-r from-sky-50 to-primary-50 border border-primary-100 flex items-center gap-2 flex-wrap">
+                    <SlidersHorizontal className="w-4 h-4 text-primary-600 flex-shrink-0" />
+                    <span className="text-xs font-medium text-primary-800">当前核算因子版本：</span>
+                    {(['electricity', 'gas', 'steam', 'fuel'] as EmissionFactorKey[]).map((k) => {
+                      const v = selectedResultWithVersion.factorVersionMap[k];
+                      const labels: Record<EmissionFactorKey, string> = {
+                        electricity: '电',
+                        gas: '气',
+                        steam: '汽',
+                        fuel: '油',
+                      };
+                      return (
+                        <span key={k} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-white/80 border border-primary-100 text-zinc-700">
+                          <Tag className="w-3 h-3 text-primary-500" />
+                          {labels[k]} <span className="font-mono font-semibold">{v.version}</span>
+                          <span className="text-zinc-400">({v.effectiveMonth})</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-3 gap-3">
                   <div className="p-4 rounded-xl bg-green-50 border border-green-100">
                     <span className="text-xs text-green-700">范围一</span>
@@ -617,7 +697,6 @@ export default function Audit() {
                   </div>
                 </div>
 
-                {/* Last Month Compare */}
                 {(lastMonthCompare || sameMonthLastYear) && (
                   <div className="grid grid-cols-2 gap-4">
                     {lastMonthCompare && (
@@ -672,7 +751,6 @@ export default function Audit() {
                   </div>
                 )}
 
-                {/* Energy Source Data */}
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <FileText className="w-4 h-4 text-zinc-400" />
@@ -734,7 +812,6 @@ export default function Audit() {
                   </div>
                 </div>
 
-                {/* Energy Change Breakdown */}
                 {energyBreakdownChange && energyBreakdownChange.length > 0 && (
                   <div>
                     <div className="flex items-center gap-2 mb-3">
@@ -771,7 +848,6 @@ export default function Audit() {
                   </div>
                 )}
 
-                {/* History Trend */}
                 {historyComparison.length > 0 && (
                   <div>
                     <div className="flex items-center gap-2 mb-3">
@@ -779,7 +855,7 @@ export default function Audit() {
                       <h3 className="text-sm font-semibold text-zinc-900">近月排放趋势</h3>
                     </div>
                     <div className="space-y-2">
-                      {historyComparison.map((item, idx) => (
+                      {historyComparison.map((item) => (
                         <div
                           key={item.period}
                           className={cn(
@@ -828,7 +904,6 @@ export default function Audit() {
                   </div>
                 )}
 
-                {/* Attachments */}
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <Paperclip className="w-4 h-4 text-zinc-400" />
@@ -871,76 +946,65 @@ export default function Audit() {
                   )}
                 </div>
 
-                {/* Audit Records */}
                 <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <MessageSquare className="w-4 h-4 text-zinc-400" />
-                    <h3 className="text-sm font-semibold text-zinc-900">审核记录</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="w-4 h-4 text-zinc-400" />
+                      <h3 className="text-sm font-semibold text-zinc-900">审核记录</h3>
+                    </div>
+                    <span className="text-[11px] text-zinc-400 flex items-center gap-1">
+                      <History className="w-3 h-3" />
+                      共 {relevantAuditRecords.length} 条追溯记录
+                    </span>
                   </div>
                   {relevantAuditRecords.length === 0 ? (
                     <div className="p-4 rounded-lg bg-zinc-50 text-center text-sm text-zinc-400">
                       暂无审核记录
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {relevantAuditRecords.map((record) => (
-                        <div key={record.id} className="flex gap-3">
-                          <div
-                            className={cn(
-                              'w-8 h-8 rounded-full shrink-0 flex items-center justify-center',
-                              record.action === 'approve'
-                                ? 'bg-green-100'
-                                : record.action === 'reject'
-                                ? 'bg-red-100'
-                                : 'bg-zinc-100'
-                            )}
-                          >
-                            {record.action === 'approve' ? (
-                              <CheckCircle2 className="w-4 h-4 text-green-600" />
-                            ) : record.action === 'reject' ? (
-                              <XCircle className="w-4 h-4 text-red-600" />
-                            ) : (
-                              <Clock className="w-4 h-4 text-zinc-600" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-medium text-zinc-900">
-                                {record.auditor}
-                              </span>
-                              <span
+                    <div className="relative pl-1">
+                      <div className="absolute left-[18px] top-2 bottom-2 w-px bg-zinc-200" />
+                      <div className="space-y-4">
+                        {relevantAuditRecords.map((record, idx) => {
+                          const meta = ACTION_META[record.action] || ACTION_META.submit;
+                          const Icon = meta.icon;
+                          const isLast = idx === relevantAuditRecords.length - 1;
+                          return (
+                            <div key={record.id} className="flex gap-3 relative">
+                              <div
                                 className={cn(
-                                  'px-2 py-0.5 text-xs rounded',
-                                  record.action === 'approve'
-                                    ? 'bg-green-100 text-green-700'
-                                    : record.action === 'reject'
-                                    ? 'bg-red-100 text-red-700'
-                                    : 'bg-zinc-100 text-zinc-700'
+                                  'w-9 h-9 rounded-full shrink-0 flex items-center justify-center z-10 ring-4 ring-white',
+                                  meta.dot
                                 )}
                               >
-                                {record.action === 'approve'
-                                  ? '审核通过'
-                                  : record.action === 'reject'
-                                  ? '审核退回'
-                                  : '提交'}
-                              </span>
-                              <span className="text-xs text-zinc-400">
-                                {formatDateTime(record.timestamp)}
-                              </span>
+                                <Icon className="w-4 h-4" />
+                              </div>
+                              <div className="flex-1 min-w-0 pt-0.5">
+                                <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                                  <span className="text-sm font-semibold text-zinc-900">
+                                    {record.auditor}
+                                  </span>
+                                  <span className={cn('px-2 py-0.5 text-xs rounded font-medium', meta.bg)}>
+                                    {meta.label}
+                                  </span>
+                                  <span className="text-[11px] text-zinc-400 font-mono ml-auto">
+                                    {formatDateTime(record.timestamp)}
+                                  </span>
+                                </div>
+                                {record.opinion && (
+                                  <p className="mt-0.5 text-sm text-zinc-600 bg-zinc-50 border border-zinc-100 p-2 rounded-lg">
+                                    {record.opinion}
+                                  </p>
+                                )}
+                              </div>
                             </div>
-                            {record.opinion && (
-                              <p className="mt-1 text-sm text-zinc-600 bg-zinc-50 p-2 rounded">
-                                {record.opinion}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Audit Opinion for pending */}
                 {selectedData.status === 'pending' && (
                   <div className="border-t border-zinc-200 pt-5">
                     <label className="label">审核意见 <span className="text-red-500">（退回必填）</span></label>
@@ -954,14 +1018,13 @@ export default function Audit() {
                   </div>
                 )}
 
-                {/* Show existing opinion */}
                 {(selectedData.status === 'approved' ||
                   selectedData.status === 'rejected' ||
                   selectedData.status === 'locked') &&
                   selectedData.auditOpinion && (
                     <div className="border-t border-zinc-200 pt-5">
-                      <span className="label">审核意见</span>
-                      <div className="mt-1 p-3 rounded-lg bg-zinc-50 text-sm text-zinc-700">
+                      <span className="label">最近审核意见</span>
+                      <div className="mt-1 p-3 rounded-lg bg-zinc-50 text-sm text-zinc-700 border border-zinc-100">
                         {selectedData.auditOpinion}
                       </div>
                       {selectedData.auditor && (
@@ -972,7 +1035,6 @@ export default function Audit() {
                     </div>
                   )}
 
-                {/* Action Buttons */}
                 <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-zinc-200">
                   {selectedData.status === 'pending' ? (
                     <div className="flex gap-3 justify-end">
@@ -1003,10 +1065,7 @@ export default function Audit() {
                       >
                         关闭
                       </button>
-                      <button
-                        onClick={handleLock}
-                        className={cn('btn', 'bg-purple-500 text-white hover:bg-purple-600')}
-                      >
+                      <button onClick={handleLock} className={cn('btn', 'bg-purple-500 text-white hover:bg-purple-600')}>
                         <Lock className="w-4 h-4" />
                         锁定周期
                       </button>
@@ -1015,7 +1074,7 @@ export default function Audit() {
                     <div className="flex gap-3 justify-end">
                       <button
                         onClick={closeSidebar}
-                        className={cn('btn btn-primary')}
+                        className={cn('btn btn-secondary')}
                       >
                         关闭
                       </button>

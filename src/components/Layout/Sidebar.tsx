@@ -10,7 +10,8 @@ import {
   Leaf,
   ChevronDown,
   Users,
-  Building
+  Building,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -32,6 +33,7 @@ const menuItems: MenuItem[] = [
   { key: 'audit', label: '审核任务', path: '/audit', icon: ClipboardCheck },
   { key: 'results', label: '核算结果', path: '/results', icon: BarChart3 },
   { key: 'analysis', label: '对比分析', path: '/analysis', icon: TrendingUp },
+  { key: 'factor-config', label: '排放因子', path: '/factor-config', icon: SlidersHorizontal },
 ];
 
 const roleOptions: { value: UserRole; label: string; icon: React.ElementType }[] = [

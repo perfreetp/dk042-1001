@@ -62,7 +62,7 @@ export interface AuditRecord {
   enterpriseId: string;
   period: string;
   auditor: string;
-  action: 'approve' | 'reject' | 'submit';
+  action: 'approve' | 'reject' | 'submit' | 'lock';
   opinion?: string;
   timestamp: string;
 }
@@ -80,6 +80,24 @@ export interface Attachment {
   uploadedBy?: string;
   uploadedAt?: string;
   uploadTime: string;
+}
+
+export type EmissionFactorKey = 'electricity' | 'gas' | 'steam' | 'fuel';
+
+export interface EmissionFactor {
+  id: string;
+  key: EmissionFactorKey;
+  label: string;
+  unit: string;
+  version: string;
+  effectiveMonth: string;
+  value: number;
+  createdAt: string;
+  note?: string;
+}
+
+export interface EmissionResultWithVersion extends EmissionResult {
+  factorVersionMap: Record<EmissionFactorKey, { version: string; value: number; effectiveMonth: string }>;
 }
 
 export type UserRole = 'enterprise' | 'admin';

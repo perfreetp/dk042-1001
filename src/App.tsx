@@ -7,20 +7,23 @@ import Attachments from "@/pages/Attachments";
 import Audit from "@/pages/Audit";
 import Results from "@/pages/Results";
 import Analysis from "@/pages/Analysis";
+import FactorConfig from "@/pages/FactorConfig";
 
 export default function App() {
   return (
     <Router>
       <Layout>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/enterprises" element={<Enterprises />} />
           <Route path="/data-entry" element={<DataEntry />} />
           <Route path="/attachments" element={<Attachments />} />
           <Route path="/audit" element={<Audit />} />
           <Route path="/results" element={<Results />} />
           <Route path="/analysis" element={<Analysis />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="/factor-config" element={<FactorConfig />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>
     </Router>

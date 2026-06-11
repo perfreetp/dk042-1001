@@ -9,14 +9,15 @@ interface AuditState {
   attachments: Attachment[];
   initAuditRecords: (records: AuditRecord[]) => void;
   initAttachments: (attachments: Attachment[]) => void;
-  approve: (id: string, auditor: string, opinion?: string) => void;
-  reject: (id: string, auditor: string, opinion: string) => void;
+  approve: (id: string, auditor: string, opinion?: string) => AuditRecord | null;
+  reject: (id: string, auditor: string, opinion: string) => AuditRecord | null;
   batchApprove: (ids: string[], auditor: string) => string[];
-  lockPeriod: (id: string) => boolean;
-  batchLock: (ids: string[]) => string[];
+  lockPeriod: (id: string, auditor?: string) => { success: boolean; record: AuditRecord | null };
+  batchLock: (ids: string[], auditor?: string) => string[];
   addAttachment: (attachment: Attachment) => void;
   removeAttachment: (id: string) => void;
   getAttachments: (enterpriseId: string, period: string) => Attachment[];
+  getRecordsForEmission: (emissionDataId: string) => AuditRecord[];
 }
 
 const mockData = initMockData();
@@ -35,11 +36,11 @@ export const useAuditStore = create<AuditState>((set, get) => ({
     const emissionData = emissionState.emissionData.find((d: EmissionData) => d.id === id);
 
     if (!emissionData || emissionData.status !== 'pending') {
-      return;
+      return null;
     }
 
     const record: AuditRecord = {
-      id: `audit-${Date.now()}`,
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       emissionDataId: id,
       enterpriseId: emissionData?.enterpriseId || '',
       period: emissionData?.period || '',
@@ -60,8 +61,9 @@ export const useAuditStore = create<AuditState>((set, get) => ({
     set((state) => ({
       auditRecords: [...state.auditRecords, record]
     }));
-    
+
     persistAll();
+    return record;
   },
 
   reject: (id, auditor, opinion) => {
@@ -70,11 +72,11 @@ export const useAuditStore = create<AuditState>((set, get) => ({
     const emissionData = emissionState.emissionData.find((d: EmissionData) => d.id === id);
 
     if (!emissionData || emissionData.status !== 'pending') {
-      return;
+      return null;
     }
 
     const record: AuditRecord = {
-      id: `audit-${Date.now()}`,
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       emissionDataId: id,
       enterpriseId: emissionData?.enterpriseId || '',
       period: emissionData?.period || '',
@@ -93,14 +95,15 @@ export const useAuditStore = create<AuditState>((set, get) => ({
     set((state) => ({
       auditRecords: [...state.auditRecords, record]
     }));
-    
+
     persistAll();
+    return record;
   },
 
   batchApprove: (ids, auditor) => {
     const emissionState = useEmissionStore.getState();
     const timestamp = new Date().toISOString();
-    
+
     const pendingIds = ids.filter(id => {
       const data = emissionState.emissionData.find(d => d.id === id);
       return data && data.status === 'pending';
@@ -113,7 +116,7 @@ export const useAuditStore = create<AuditState>((set, get) => ({
     const newRecords: AuditRecord[] = pendingIds.map(id => {
       const data = emissionState.emissionData.find(d => d.id === id);
       return {
-        id: `audit-${Date.now()}-${id}`,
+        id: `audit-${Date.now()}-${id}-${Math.random().toString(36).slice(2, 6)}`,
         emissionDataId: id,
         enterpriseId: data?.enterpriseId || '',
         period: data?.period || '',
@@ -140,14 +143,25 @@ export const useAuditStore = create<AuditState>((set, get) => ({
     return pendingIds;
   },
 
-  lockPeriod: (id) => {
+  lockPeriod: (id, auditor = '系统管理员') => {
     const timestamp = new Date().toISOString();
     const emissionState = useEmissionStore.getState();
     const emissionData = emissionState.emissionData.find((d: EmissionData) => d.id === id);
 
     if (!emissionData || emissionData.status !== 'approved') {
-      return false;
+      return { success: false, record: null };
     }
+
+    const record: AuditRecord = {
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      emissionDataId: id,
+      enterpriseId: emissionData?.enterpriseId || '',
+      period: emissionData?.period || '',
+      auditor,
+      action: 'lock',
+      opinion: '管理员锁定该月份数据，不可修改',
+      timestamp
+    };
 
     useEmissionStore.setState({
       emissionData: emissionState.emissionData.map((d: EmissionData) =>
@@ -155,14 +169,18 @@ export const useAuditStore = create<AuditState>((set, get) => ({
       )
     });
 
+    set((state) => ({
+      auditRecords: [...state.auditRecords, record]
+    }));
+
     persistAll();
-    return true;
+    return { success: true, record };
   },
 
-  batchLock: (ids) => {
+  batchLock: (ids, auditor = '系统管理员') => {
     const emissionState = useEmissionStore.getState();
     const timestamp = new Date().toISOString();
-    
+
     const approvedIds = ids.filter(id => {
       const data = emissionState.emissionData.find(d => d.id === id);
       return data && data.status === 'approved';
@@ -172,6 +190,20 @@ export const useAuditStore = create<AuditState>((set, get) => ({
       return [];
     }
 
+    const newRecords: AuditRecord[] = approvedIds.map(id => {
+      const data = emissionState.emissionData.find(d => d.id === id);
+      return {
+        id: `audit-${Date.now()}-${id}-${Math.random().toString(36).slice(2, 6)}`,
+        emissionDataId: id,
+        enterpriseId: data?.enterpriseId || '',
+        period: data?.period || '',
+        auditor,
+        action: 'lock',
+        opinion: '批量锁定该月份数据',
+        timestamp
+      };
+    });
+
     useEmissionStore.setState({
       emissionData: emissionState.emissionData.map((d: EmissionData) =>
         approvedIds.includes(d.id)
@@ -179,6 +211,10 @@ export const useAuditStore = create<AuditState>((set, get) => ({
           : d
       )
     });
+
+    set((state) => ({
+      auditRecords: [...state.auditRecords, ...newRecords]
+    }));
 
     persistAll();
     return approvedIds;
@@ -201,5 +237,10 @@ export const useAuditStore = create<AuditState>((set, get) => ({
   getAttachments: (enterpriseId, period) =>
     get().attachments.filter(
       (a) => a.enterpriseId === enterpriseId && a.period === period
-    )
+    ),
+
+  getRecordsForEmission: (emissionDataId) =>
+    get()
+      .auditRecords.filter((r) => r.emissionDataId === emissionDataId)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
 }));

@@ -40,10 +40,6 @@ import { exportEnterprises } from '@/utils/export';
 import { cn } from '@/lib/utils';
 import type { Enterprise, EmissionData } from '@/types';
 
-const INDUSTRIES = [
-  '电子制造', '机械加工', '化工医药', '纺织服装',
-  '食品饮料', '建材冶金', '汽车装备', '其他行业'
-];
 const SCALES = ['大型', '中型', '小型', '微型'];
 
 interface EnergyDiff {
@@ -116,6 +112,10 @@ export default function Analysis() {
   };
 
   const allMonths = useMemo(() => getLast12Months(), []);
+
+  const INDUSTRY_LIST = useMemo(() => {
+    return Array.from(new Set(enterprises.map((e) => e.industry))).sort();
+  }, [enterprises]);
 
   const filteredEmissionData = useMemo(() => {
     return emissionData.filter((d) => d.period >= startMonth && d.period <= endMonth);
@@ -459,7 +459,7 @@ export default function Analysis() {
               </button>
               {industryDropdownOpen && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg max-h-60 overflow-y-auto animate-fade-in">
-                  {INDUSTRIES.map((ind) => (
+                  {INDUSTRY_LIST.map((ind) => (
                     <button
                       key={ind}
                       onClick={() => handleIndustryToggle(ind)}

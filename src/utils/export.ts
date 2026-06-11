@@ -1,25 +1,58 @@
-import type { Enterprise, EmissionData, EmissionResult } from '../types';
-import { calculateEmission } from './calculator';
+import type { Enterprise, EmissionData, EmissionResult, EmissionResultWithVersion } from '../types';
+import { calculateEmission, calculateEmissionWithVersion } from './calculator';
 import { formatEmission, formatDateTime } from './formatter';
+
+const MAX_CSV_COLUMNS = 18;
+
+function buildEmptyRow(): Record<string, string> {
+  const row: Record<string, string> = {};
+  for (let i = 1; i <= MAX_CSV_COLUMNS; i++) {
+    row[`col${i}`] = '';
+  }
+  return row;
+}
+
+function buildSectionTitleRow(title: string): Record<string, string> {
+  const row = buildEmptyRow();
+  row.col1 = title;
+  return row;
+}
+
+function buildRowFromArray(values: (string | number)[]): Record<string, string> {
+  const row = buildEmptyRow();
+  values.forEach((v, i) => {
+    if (i < MAX_CSV_COLUMNS) {
+      row[`col${i + 1}`] = String(v ?? '');
+    }
+  });
+  return row;
+}
 
 export function exportToCSV(data: any[], filename: string): void {
   if (!data || data.length === 0) return;
 
-  const headers = Object.keys(data[0]);
+  let headers: string[];
+  const firstKeys = Object.keys(data[0]);
+  const hasFixedCols = firstKeys.every(k => /^col\d+$/.test(k));
+  if (hasFixedCols) {
+    headers = firstKeys.sort((a, b) => parseInt(a.slice(3)) - parseInt(b.slice(3)));
+  } else {
+    headers = firstKeys;
+  }
+
+  const escapeCell = (value: any): string => {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
   const csvRows = [
     headers.join(','),
     ...data.map((row) =>
-      headers
-        .map((header) => {
-          const value = row[header];
-          if (value === null || value === undefined) return '';
-          const str = String(value);
-          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-            return `"${str.replace(/"/g, '""')}"`;
-          }
-          return str;
-        })
-        .join(',')
+      headers.map((h) => escapeCell(row[h])).join(',')
     ),
   ];
 
@@ -91,98 +124,90 @@ interface AnomalyInfo {
     total: number;
     count: number;
   }[];
+  template?: 'park' | 'enterprise';
+  selectedEnterpriseName?: string;
+  factorVersionSummary?: string;
 }
 
 export function exportEmissionReport(
-  data: (EmissionData & { enterpriseName?: string; result?: EmissionResult; industry?: string })[],
+  data: (EmissionData & { enterpriseName?: string; result?: EmissionResult | EmissionResultWithVersion; industry?: string })[],
   anomalyInfo?: AnomalyInfo
 ): void {
-  const exportData: any[] = [];
+  const rows: Record<string, string>[] = [];
 
-  exportData.push({ '【报告汇总信息】': '' });
-  exportData.push({ '生成时间': formatDateTime(new Date().toISOString()) });
+  rows.push(buildSectionTitleRow('【碳排放核算报告】'));
+  rows.push(buildSectionTitleRow(`生成时间：${formatDateTime(new Date().toISOString())}`));
+
   if (anomalyInfo) {
-    exportData.push({ '企业范围': anomalyInfo.filters.enterprises });
-    exportData.push({ '行业范围': anomalyInfo.filters.industries });
-    exportData.push({ '月份范围': anomalyInfo.filters.periodRange });
-    exportData.push({ '记录数量': anomalyInfo.filters.recordCount });
-    exportData.push({ '' : '' });
-    exportData.push({ '【范围排放汇总】': '' });
-    exportData.push({ '范围一(tCO₂)': anomalyInfo.scopeSummary.scope1.toFixed(2) });
-    exportData.push({ '范围二(tCO₂)': anomalyInfo.scopeSummary.scope2.toFixed(2) });
-    exportData.push({ '总排放(tCO₂)': anomalyInfo.scopeSummary.total.toFixed(2) });
-    if (anomalyInfo.scopeSummary.total > 0) {
-      exportData.push({ '范围一占比(%)': ((anomalyInfo.scopeSummary.scope1 / anomalyInfo.scopeSummary.total) * 100).toFixed(2) });
-      exportData.push({ '范围二占比(%)': ((anomalyInfo.scopeSummary.scope2 / anomalyInfo.scopeSummary.total) * 100).toFixed(2) });
+    if (anomalyInfo.template === 'enterprise' && anomalyInfo.selectedEnterpriseName) {
+      rows.push(buildSectionTitleRow(`报告模板：单企业报告`));
+      rows.push(buildSectionTitleRow(`企业名称：${anomalyInfo.selectedEnterpriseName}`));
+    } else {
+      rows.push(buildSectionTitleRow(`报告模板：园区汇总报告`));
+    }
+    rows.push(buildSectionTitleRow(`企业范围：${anomalyInfo.filters.enterprises}`));
+    rows.push(buildSectionTitleRow(`行业范围：${anomalyInfo.filters.industries}`));
+    rows.push(buildSectionTitleRow(`月份范围：${anomalyInfo.filters.periodRange}`));
+    rows.push(buildSectionTitleRow(`记录数量：${anomalyInfo.filters.recordCount}`));
+    if (anomalyInfo.factorVersionSummary) {
+      rows.push(buildSectionTitleRow(`因子版本：${anomalyInfo.factorVersionSummary}`));
     }
   }
 
+  rows.push(buildEmptyRow());
+  rows.push(buildSectionTitleRow('【范围排放汇总】'));
+  if (anomalyInfo) {
+    rows.push(buildRowFromArray(['排放范围', '排放量(tCO₂)', '占比(%)']));
+    const total = anomalyInfo.scopeSummary.total || 0;
+    rows.push(buildRowFromArray(['范围一（直接排放）', anomalyInfo.scopeSummary.scope1.toFixed(2), total > 0 ? ((anomalyInfo.scopeSummary.scope1 / total) * 100).toFixed(2) : '0.00']));
+    rows.push(buildRowFromArray(['范围二（间接排放）', anomalyInfo.scopeSummary.scope2.toFixed(2), total > 0 ? ((anomalyInfo.scopeSummary.scope2 / total) * 100).toFixed(2) : '0.00']));
+    rows.push(buildRowFromArray(['总排放量', anomalyInfo.scopeSummary.total.toFixed(2), '100.00']));
+  }
+
   if (anomalyInfo && anomalyInfo.industrySummary.length > 0) {
-    exportData.push({ '' : '' });
-    exportData.push({ '【行业排放汇总】': '' });
-    exportData.push({
-      '行业': '',
-      '企业数量': '',
-      '范围一(tCO₂)': '',
-      '范围二(tCO₂)': '',
-      '总排放(tCO₂)': '',
-    });
+    rows.push(buildEmptyRow());
+    rows.push(buildSectionTitleRow('【行业排放汇总】'));
+    rows.push(buildRowFromArray(['行业', '企业数量', '范围一(tCO₂)', '范围二(tCO₂)', '总排放(tCO₂)']));
     anomalyInfo.industrySummary.forEach((item) => {
-      exportData.push({
-        '行业': item.industry,
-        '企业数量': item.count,
-        '范围一(tCO₂)': item.scope1.toFixed(2),
-        '范围二(tCO₂)': item.scope2.toFixed(2),
-        '总排放(tCO₂)': item.total.toFixed(2),
-      });
+      rows.push(buildRowFromArray([
+        item.industry,
+        item.count,
+        item.scope1.toFixed(2),
+        item.scope2.toFixed(2),
+        item.total.toFixed(2),
+      ]));
     });
   }
 
-  exportData.push({ '' : '' });
-  exportData.push({ '【企业明细数据】': '' });
-
-  const firstDataRow = {
-    '企业名称': '',
-    '所属行业': '',
-    '统计周期': '',
-    '用电量(kWh)': '',
-    '天然气(m³)': '',
-    '蒸汽(t)': '',
-    '燃料(t)': '',
-    '产量': '',
-    '范围一排放(tCO₂)': '',
-    '范围二排放(tCO₂)': '',
-    '总排放(tCO₂)': '',
-    '电力排放(tCO₂)': '',
-    '天然气排放(tCO₂)': '',
-    '蒸汽排放(tCO₂)': '',
-    '燃料排放(tCO₂)': '',
-    '状态': '',
-    '提交时间': '',
-    '审核人': '',
-    '审核意见': '',
-  };
-  exportData.push(firstDataRow);
+  rows.push(buildEmptyRow());
+  rows.push(buildSectionTitleRow('【企业明细数据】'));
+  rows.push(buildRowFromArray([
+    '企业名称', '所属行业', '统计周期',
+    '用电量(kWh)', '天然气(m³)', '蒸汽(t)', '燃料(t)', '产量',
+    '范围一(tCO₂)', '范围二(tCO₂)', '总排放(tCO₂)',
+    '电力排放(tCO₂)', '天然气排放(tCO₂)', '蒸汽排放(tCO₂)', '燃料排放(tCO₂)',
+    '状态', '提交时间', '审核人', '审核意见',
+  ]));
 
   data.forEach((item) => {
     const result = item.result || calculateEmission(item);
-    exportData.push({
-      '企业名称': item.enterpriseName || '',
-      '所属行业': item.industry || '',
-      '统计周期': item.period,
-      '用电量(kWh)': item.electricity,
-      '天然气(m³)': item.gas,
-      '蒸汽(t)': item.steam,
-      '燃料(t)': item.fuel,
-      '产量': item.production,
-      '范围一排放(tCO₂)': result.scope1.toFixed(2),
-      '范围二排放(tCO₂)': result.scope2.toFixed(2),
-      '总排放(tCO₂)': result.total.toFixed(2),
-      '电力排放(tCO₂)': result.breakdown.electricity.toFixed(2),
-      '天然气排放(tCO₂)': result.breakdown.gas.toFixed(2),
-      '蒸汽排放(tCO₂)': result.breakdown.steam.toFixed(2),
-      '燃料排放(tCO₂)': result.breakdown.fuel.toFixed(2),
-      '状态': (() => {
+    rows.push(buildRowFromArray([
+      item.enterpriseName || '',
+      item.industry || '',
+      item.period,
+      item.electricity,
+      item.gas,
+      item.steam,
+      item.fuel,
+      item.production,
+      result.scope1.toFixed(2),
+      result.scope2.toFixed(2),
+      result.total.toFixed(2),
+      result.breakdown.electricity.toFixed(2),
+      result.breakdown.gas.toFixed(2),
+      result.breakdown.steam.toFixed(2),
+      result.breakdown.fuel.toFixed(2),
+      (() => {
         switch (item.status) {
           case 'draft': return '草稿';
           case 'pending': return '待审核';
@@ -192,61 +217,47 @@ export function exportEmissionReport(
           default: return item.status;
         }
       })(),
-      '提交时间': item.submitTime ? formatDateTime(item.submitTime) : '',
-      '审核人': item.auditor || '',
-      '审核意见': item.auditOpinion || '',
-    });
+      item.submitTime ? formatDateTime(item.submitTime) : '',
+      item.auditor || '',
+      item.auditOpinion || '',
+    ]));
   });
 
   if (anomalyInfo && (anomalyInfo.anomalies.length > 0 || anomalyInfo.energyBreakdownDetails.length > 0)) {
-    exportData.push({ '' : '' });
-    exportData.push({ '【异常波动说明】': '' });
+    rows.push(buildEmptyRow());
+    rows.push(buildSectionTitleRow('【异常波动说明】'));
   }
 
   if (anomalyInfo && anomalyInfo.anomalies.length > 0) {
-    exportData.push({ '异常类型一：排放总量异常（同比/环比）': '' });
-    exportData.push({
-      '企业名称': '',
-      '月份': '',
-      '类型（同比/环比）': '',
-      '变化率(%)': '',
-      '说明': '',
-    });
+    rows.push(buildSectionTitleRow('● 异常类型一：排放总量异常（同比/环比）'));
+    rows.push(buildRowFromArray(['企业名称', '月份', '类型', '变化率(%)', '说明']));
     anomalyInfo.anomalies.forEach((a) => {
-      exportData.push({
-        '企业名称': a.enterpriseName,
-        '月份': a.period,
-        '类型（同比/环比）': a.type,
-        '变化率(%)': a.changeRate.toFixed(2),
-        '说明': a.message,
-      });
+      rows.push(buildRowFromArray([
+        a.enterpriseName,
+        a.period,
+        a.type,
+        a.changeRate.toFixed(2),
+        a.message,
+      ]));
     });
   }
 
   if (anomalyInfo && anomalyInfo.energyBreakdownDetails.length > 0) {
-    exportData.push({ '' : '' });
-    exportData.push({ '异常类型二：能源分项异常（变化率>30%）': '' });
-    exportData.push({
-      '企业名称': '',
-      '月份': '',
-      '能源类型': '',
-      '上期值': '',
-      '本期值': '',
-      '变化率(%)': '',
-      '排放变化(tCO₂)': '',
-    });
+    rows.push(buildEmptyRow());
+    rows.push(buildSectionTitleRow('● 异常类型二：能源分项异常（变化率>30%）'));
+    rows.push(buildRowFromArray(['企业名称', '月份', '能源类型', '上期值', '本期值', '变化率(%)', '排放变化(tCO₂)']));
     anomalyInfo.energyBreakdownDetails.forEach((e) => {
-      exportData.push({
-        '企业名称': e.enterpriseName,
-        '月份': e.period,
-        '能源类型': e.energyLabel,
-        '上期值': e.previous,
-        '本期值': e.current,
-        '变化率(%)': e.changeRate.toFixed(2),
-        '排放变化(tCO₂)': e.emissionChange.toFixed(2),
-      });
+      rows.push(buildRowFromArray([
+        e.enterpriseName,
+        e.period,
+        e.energyLabel,
+        e.previous,
+        e.current,
+        e.changeRate.toFixed(2),
+        e.emissionChange.toFixed(2),
+      ]));
     });
   }
 
-  exportToCSV(exportData, '碳排放核算报告');
+  exportToCSV(rows, '碳排放核算报告');
 }
