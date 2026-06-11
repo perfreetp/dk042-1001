@@ -14,9 +14,10 @@ import StatCard from '@/components/StatCard';
 import StatusBadge from '@/components/StatusBadge';
 import Modal from '@/components/Modal';
 import DataTable, { type DataTableColumn } from '@/components/DataTable';
-import { useAuditStore } from '@/store/audit';
-import { useEmissionStore } from '@/store/emission';
-import { useEnterpriseStore } from '@/store/enterprise';
+import { useAuditStore } from '@/store';
+import { useEmissionStore } from '@/store';
+import { useEnterpriseStore } from '@/store';
+import { useUIStore } from '@/store/ui';
 import { calculateEmission } from '@/utils/calculator';
 import { formatEmission, formatDateTime } from '@/utils/formatter';
 import { cn } from '@/lib/utils';
@@ -41,7 +42,8 @@ function getMonths(): string[] {
 }
 
 export default function Audit() {
-  const { approve, reject, batchApprove, lockPeriod } = useAuditStore();
+  const { approve, reject, batchApprove, lockPeriod, batchLock } = useAuditStore();
+  const { addToast } = useUIStore();
   const { emissionData } = useEmissionStore();
   const { enterprises, getEnterpriseById } = useEnterpriseStore();
 
@@ -87,7 +89,12 @@ export default function Audit() {
 
   const handleApprove = () => {
     if (!currentAuditData) return;
+    if (currentAuditData.status !== 'pending') {
+      addToast('只有待审核状态的数据才能审核通过', 'warning');
+      return;
+    }
     approve(currentAuditData.id, '审核员', auditOpinion || undefined);
+    addToast('已审核通过', 'success');
     closeAuditModal();
   };
 
@@ -96,22 +103,54 @@ export default function Audit() {
     if (!auditOpinion.trim()) {
       return;
     }
+    if (currentAuditData.status !== 'pending') {
+      addToast('只有待审核状态的数据才能退回', 'warning');
+      return;
+    }
     reject(currentAuditData.id, '审核员', auditOpinion);
+    addToast('已退回，企业需要重新修正数据', 'success');
     closeAuditModal();
   };
 
   const handleBatchApprove = () => {
-    batchApprove(selectedRowKeys, '审核员');
+    const pendingCount = selectedRowKeys.filter(id => {
+      const data = emissionData.find(d => d.id === id);
+      return data && data.status === 'pending';
+    }).length;
+    
+    if (pendingCount === 0) {
+      addToast('未选择待审核状态的记录，批量审核仅对待审核数据生效', 'warning');
+      return;
+    }
+    
+    const processedIds = batchApprove(selectedRowKeys, '审核员');
+    addToast(`已成功审核通过 ${processedIds.length} 条待审核记录`, 'success');
     setSelectedRowKeys([]);
   };
 
   const handleBatchLock = () => {
-    selectedRowKeys.forEach((id) => lockPeriod(id));
+    const approvedCount = selectedRowKeys.filter(id => {
+      const data = emissionData.find(d => d.id === id);
+      return data && data.status === 'approved';
+    }).length;
+    
+    if (approvedCount === 0) {
+      addToast('未选择已通过状态的记录，批量锁定仅对已通过数据生效', 'warning');
+      return;
+    }
+    
+    const processedIds = batchLock(selectedRowKeys);
+    addToast(`已成功锁定 ${processedIds.length} 条已通过记录`, 'success');
     setSelectedRowKeys([]);
   };
 
   const handleLock = (id: string) => {
-    lockPeriod(id);
+    const success = lockPeriod(id);
+    if (success) {
+      addToast('已成功锁定该周期', 'success');
+    } else {
+      addToast('只有已通过状态的数据才能锁定', 'warning');
+    }
   };
 
   const currentResult = currentAuditData ? calculateEmission(currentAuditData) : null;

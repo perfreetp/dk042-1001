@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Enterprise } from '@/types';
 import { initMockData } from './mockData';
+import { persistAll } from './persist';
 
 interface EnterpriseState {
   enterprises: Enterprise[];
@@ -23,26 +24,32 @@ export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
 
   init: (enterprises) => set({ enterprises }),
 
-  addEnterprise: (enterprise) =>
+  addEnterprise: (enterprise) => {
     set((state) => ({
       enterprises: [...state.enterprises, enterprise]
-    })),
+    }));
+    persistAll();
+  },
 
-  updateEnterprise: (id, data) =>
+  updateEnterprise: (id, data) => {
     set((state) => ({
       enterprises: state.enterprises.map((ent) =>
         ent.id === id ? { ...ent, ...data } : ent
       )
-    })),
+    }));
+    persistAll();
+  },
 
-  deleteEnterprise: (id) =>
+  deleteEnterprise: (id) => {
     set((state) => ({
       enterprises: state.enterprises.map((ent) =>
         ent.id === id ? { ...ent, status: 'inactive' as const } : ent
       )
-    })),
+    }));
+    persistAll();
+  },
 
   setCurrentEnterprise: (id) => set({ currentEnterpriseId: id }),
 
-  getEnterpriseById: (id) => get().enterprises.find((ent) => ent.id === id)
+  getEnterpriseById: (id) => get().enterprises.find((ent) => ent.id === id),
 }));

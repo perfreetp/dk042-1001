@@ -13,8 +13,7 @@ import {
   AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
-import { useEnterpriseStore } from '@/store/enterprise';
-import { useAuditStore } from '@/store/audit';
+import { useEnterpriseStore, useAuditStore } from '@/store';
 import { useUIStore } from '@/store/ui';
 import { cn } from '@/lib/utils';
 import Modal from '@/components/Modal';

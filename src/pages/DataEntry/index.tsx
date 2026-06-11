@@ -13,13 +13,14 @@ import {
   Copy,
   AlertTriangle,
   CheckCircle,
+  Lock,
 } from 'lucide-react';
-import { useEnterpriseStore } from '@/store/enterprise';
-import { useEmissionStore } from '@/store/emission';
+import { useEnterpriseStore, useEmissionStore } from '@/store';
 import { useUIStore } from '@/store/ui';
 import { calculateEmission } from '@/utils/calculator';
 import { cn } from '@/lib/utils';
 import Modal from '@/components/Modal';
+import StatusBadge from '@/components/StatusBadge';
 import type { EmissionData } from '@/types';
 
 interface FormData {
@@ -66,6 +67,17 @@ export default function DataEntry() {
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [selectedHistoryPeriod, setSelectedHistoryPeriod] = useState('');
 
+  const existingData = useMemo(() => {
+    if (selectedEnterpriseId && period) {
+      return getData(selectedEnterpriseId, period);
+    }
+    return undefined;
+  }, [selectedEnterpriseId, period, getData]);
+
+  const isLocked = existingData?.status === 'locked';
+  const isApproved = existingData?.status === 'approved';
+  const isReadOnly = isLocked || isApproved;
+
   useEffect(() => {
     if (selectedEnterpriseId && period) {
       const existing = getData(selectedEnterpriseId, period);
@@ -105,6 +117,7 @@ export default function DataEntry() {
   }, [selectedEnterpriseId, period, getEnterpriseAllData]);
 
   const handleInputChange = (field: keyof FormData, value: string) => {
+    if (isReadOnly) return;
     if (field === 'remark') {
       setFormData((prev) => ({ ...prev, [field]: value }));
       return;
@@ -187,6 +200,10 @@ export default function DataEntry() {
   };
 
   const handleSaveDraft = () => {
+    if (isReadOnly) {
+      addToast(isLocked ? '该周期已锁定，无法修改' : '该数据已通过审核，无法修改', 'warning');
+      return;
+    }
     if (!selectedEnterpriseId) {
       addToast('请选择企业', 'warning');
       return;
@@ -197,6 +214,10 @@ export default function DataEntry() {
   };
 
   const handleSubmit = () => {
+    if (isReadOnly) {
+      addToast(isLocked ? '该周期已锁定，无法提交' : '该数据已通过审核，无需重复提交', 'warning');
+      return;
+    }
     if (!selectedEnterpriseId) {
       addToast('请选择企业', 'warning');
       return;
@@ -212,6 +233,10 @@ export default function DataEntry() {
   };
 
   const handleCopyHistory = () => {
+    if (isReadOnly) {
+      addToast('该周期已锁定或已通过审核，无法复制数据', 'warning');
+      return;
+    }
     if (!selectedHistoryPeriod) {
       addToast('请选择历史月份', 'warning');
       return;
@@ -244,7 +269,34 @@ export default function DataEntry() {
             填写企业能源消耗与生产活动数据，系统将自动核算碳排放量
           </p>
         </div>
+        {existingData && (
+          <StatusBadge status={existingData.status} />
+        )}
       </div>
+
+      {isLocked && (
+        <div className="p-4 rounded-lg bg-purple-50 border border-purple-200 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
+            <Lock className="w-5 h-5 text-purple-600" />
+          </div>
+          <div>
+            <p className="font-semibold text-purple-800">该周期已锁定</p>
+            <p className="text-sm text-purple-600">数据已被园区管理员锁定，无法进行任何修改</p>
+          </div>
+        </div>
+      )}
+
+      {isApproved && !isLocked && (
+        <div className="p-4 rounded-lg bg-green-50 border border-green-200 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+            <CheckCircle className="w-5 h-5 text-green-600" />
+          </div>
+          <div>
+            <p className="font-semibold text-green-800">该数据已通过审核</p>
+            <p className="text-sm text-green-600">如需修改请联系管理员退回，或联系管理员锁定周期</p>
+          </div>
+        </div>
+      )}
 
       <div className="card p-4">
         <div className="flex flex-wrap gap-4 items-end">
@@ -256,7 +308,8 @@ export default function DataEntry() {
             <select
               value={selectedEnterpriseId}
               onChange={handleEnterpriseChange}
-              className={cn('input-field')}
+              disabled={isReadOnly}
+              className={cn('input-field', isReadOnly && 'bg-zinc-50 cursor-not-allowed')}
             >
               <option value="">请选择企业</option>
               {enterprises.map((ent) => (
@@ -276,14 +329,15 @@ export default function DataEntry() {
               type="month"
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
-              className={cn('input-field')}
+              disabled={isReadOnly}
+              className={cn('input-field', isReadOnly && 'bg-zinc-50 cursor-not-allowed')}
             />
           </div>
 
           <button
             onClick={() => setCopyModalOpen(true)}
             className={cn('btn btn-secondary')}
-            disabled={!selectedEnterpriseId || historyData.length === 0}
+            disabled={!selectedEnterpriseId || historyData.length === 0 || isReadOnly}
           >
             <Copy className="w-4 h-4" />
             复制上月数据
@@ -293,7 +347,7 @@ export default function DataEntry() {
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-6">
-          <div className="card p-5">
+          <div className={cn('card p-5', isReadOnly && 'bg-zinc-50/50')}>
             <div className="flex items-center gap-2 mb-5">
               <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
                 <Zap className="w-4 h-4 text-primary-600" />
@@ -314,9 +368,11 @@ export default function DataEntry() {
                     value={formData.electricity}
                     onChange={(e) => handleInputChange('electricity', e.target.value)}
                     placeholder="请输入用电量"
+                    disabled={isReadOnly}
                     className={cn(
                       'input-field pr-14',
-                      hasError('electricity') && 'input-field-error'
+                      hasError('electricity') && 'input-field-error',
+                      isReadOnly && 'bg-zinc-50 cursor-not-allowed'
                     )}
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
@@ -337,9 +393,11 @@ export default function DataEntry() {
                     value={formData.gas}
                     onChange={(e) => handleInputChange('gas', e.target.value)}
                     placeholder="请输入燃气量"
+                    disabled={isReadOnly}
                     className={cn(
                       'input-field pr-14',
-                      hasError('gas') && 'input-field-error'
+                      hasError('gas') && 'input-field-error',
+                      isReadOnly && 'bg-zinc-50 cursor-not-allowed'
                     )}
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
@@ -360,9 +418,11 @@ export default function DataEntry() {
                     value={formData.steam}
                     onChange={(e) => handleInputChange('steam', e.target.value)}
                     placeholder="请输入蒸汽量"
+                    disabled={isReadOnly}
                     className={cn(
                       'input-field pr-14',
-                      hasError('steam') && 'input-field-error'
+                      hasError('steam') && 'input-field-error',
+                      isReadOnly && 'bg-zinc-50 cursor-not-allowed'
                     )}
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
@@ -383,9 +443,11 @@ export default function DataEntry() {
                     value={formData.fuel}
                     onChange={(e) => handleInputChange('fuel', e.target.value)}
                     placeholder="请输入燃油量"
+                    disabled={isReadOnly}
                     className={cn(
                       'input-field pr-14',
-                      hasError('fuel') && 'input-field-error'
+                      hasError('fuel') && 'input-field-error',
+                      isReadOnly && 'bg-zinc-50 cursor-not-allowed'
                     )}
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
@@ -396,7 +458,7 @@ export default function DataEntry() {
             </div>
           </div>
 
-          <div className="card p-5">
+          <div className={cn('card p-5', isReadOnly && 'bg-zinc-50/50')}>
             <div className="flex items-center gap-2 mb-5">
               <div className="w-8 h-8 rounded-lg bg-accent-blue/20 flex items-center justify-center">
                 <Package className="w-4 h-4 text-accent-blue" />
@@ -417,9 +479,11 @@ export default function DataEntry() {
                     value={formData.production}
                     onChange={(e) => handleInputChange('production', e.target.value)}
                     placeholder="请输入产品产量"
+                    disabled={isReadOnly}
                     className={cn(
                       'input-field pr-14',
-                      hasError('production') && 'input-field-error'
+                      hasError('production') && 'input-field-error',
+                      isReadOnly && 'bg-zinc-50 cursor-not-allowed'
                     )}
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
@@ -438,7 +502,8 @@ export default function DataEntry() {
                   onChange={(e) => handleInputChange('remark', e.target.value)}
                   placeholder="请输入备注信息（选填）"
                   rows={4}
-                  className={cn('input-field resize-none')}
+                  disabled={isReadOnly}
+                  className={cn('input-field resize-none', isReadOnly && 'bg-zinc-50 cursor-not-allowed')}
                 />
               </div>
             </div>
@@ -486,7 +551,12 @@ export default function DataEntry() {
             <h3 className="text-base font-semibold text-zinc-900">缺项检测</h3>
           </div>
 
-          {missingFields.length === 0 ? (
+          {isReadOnly ? (
+            <div className="p-4 rounded-lg bg-purple-50 text-purple-700 text-sm">
+              <Lock className="inline w-4 h-4 mr-1.5" />
+              {isLocked ? '周期已锁定，数据不可修改' : '已通过审核，数据不可修改'}
+            </div>
+          ) : missingFields.length === 0 ? (
             <div className="p-4 rounded-lg bg-primary-50 text-primary-700 text-sm">
               <CheckCircle className="inline w-4 h-4 mr-1.5" />
               所有必填项已填写完成
@@ -511,14 +581,18 @@ export default function DataEntry() {
       </div>
 
       <div className="card p-4 flex items-center justify-end gap-3 sticky bottom-0 z-10">
-        <button onClick={handleSaveDraft} className={cn('btn btn-secondary')}>
+        <button 
+          onClick={handleSaveDraft} 
+          className={cn('btn btn-secondary')}
+          disabled={isReadOnly}
+        >
           <Save className="w-4 h-4" />
           保存草稿
         </button>
         <button
           onClick={handleSubmit}
           className={cn('btn btn-primary')}
-          disabled={missingFields.length > 0 || !selectedEnterpriseId}
+          disabled={missingFields.length > 0 || !selectedEnterpriseId || isReadOnly}
         >
           <Send className="w-4 h-4" />
           提交审核
@@ -547,7 +621,7 @@ export default function DataEntry() {
             <button
               onClick={handleCopyHistory}
               className={cn('btn btn-primary')}
-              disabled={!selectedHistoryPeriod}
+              disabled={!selectedHistoryPeriod || isReadOnly}
             >
               确认复制
             </button>
@@ -575,6 +649,7 @@ export default function DataEntry() {
                     value={d.period}
                     checked={selectedHistoryPeriod === d.period}
                     onChange={(e) => setSelectedHistoryPeriod(e.target.value)}
+                    disabled={d.status === 'locked'}
                     className="w-4 h-4 text-primary-500"
                   />
                   <div>
@@ -593,6 +668,8 @@ export default function DataEntry() {
                       ? 'bg-accent-orange/10 text-accent-orange'
                       : d.status === 'rejected'
                       ? 'bg-red-100 text-red-700'
+                      : d.status === 'locked'
+                      ? 'bg-purple-100 text-purple-700'
                       : 'bg-zinc-100 text-zinc-600'
                   )}
                 >
@@ -602,7 +679,9 @@ export default function DataEntry() {
                     ? '审核中'
                     : d.status === 'rejected'
                     ? '已驳回'
-                    : '已锁定'}
+                    : d.status === 'locked'
+                    ? '已锁定'
+                    : '草稿'}
                 </span>
               </label>
             ))}

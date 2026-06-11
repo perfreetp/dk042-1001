@@ -8,7 +8,7 @@ import {
   Building2,
   Filter,
 } from 'lucide-react';
-import { useEnterpriseStore } from '@/store/enterprise';
+import { useEnterpriseStore } from '@/store';
 import type { Enterprise } from '@/types';
 import { INDUSTRIES } from '@/utils/mockData';
 import { cn } from '@/lib/utils';
