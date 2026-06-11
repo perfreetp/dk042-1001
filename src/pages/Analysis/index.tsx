@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart,
   Bar,
@@ -19,6 +20,17 @@ import {
   ChevronDown,
   Check,
   ChevronRight,
+  Factory,
+  Layers,
+  ChevronUp,
+  ExternalLink,
+  Zap,
+  Flame,
+  Cloud,
+  Fuel,
+  TrendingUp,
+  TrendingDown,
+  X as XIcon,
 } from 'lucide-react';
 import { useEnterpriseStore } from '@/store/enterprise';
 import { useEmissionStore } from '@/store/emission';
@@ -26,25 +38,52 @@ import { calculateEmission } from '@/utils/calculator';
 import { formatEmission, formatNumber } from '@/utils/formatter';
 import { exportEnterprises } from '@/utils/export';
 import { cn } from '@/lib/utils';
-import type { Enterprise } from '@/types';
+import type { Enterprise, EmissionData } from '@/types';
+
+const INDUSTRIES = [
+  '电子制造', '机械加工', '化工医药', '纺织服装',
+  '食品饮料', '建材冶金', '汽车装备', '其他行业'
+];
+const SCALES = ['大型', '中型', '小型', '微型'];
+
+interface EnergyDiff {
+  key: string;
+  label: string;
+  icon: any;
+  color: string;
+  current: number;
+  previous: number;
+  changeRate: number;
+  emissionChange: number;
+}
 
 interface AnomalyRecord {
   id: string;
   enterpriseId: string;
   enterpriseName: string;
+  industry: string;
+  scale: string;
   period: string;
   type: '同比' | '环比';
   changeRate: number;
   message: string;
+  previousPeriod?: string;
+  energyBreakdown: EnergyDiff[];
+  totalCurrent: number;
+  totalPrevious: number;
+  totalDiff: number;
 }
 
 type CompareScope = 'scope1' | 'scope2' | 'total';
 
 export default function Analysis() {
-  const { enterprises } = useEnterpriseStore();
+  const navigate = useNavigate();
+  const { enterprises, getEnterpriseById } = useEnterpriseStore();
   const { emissionData } = useEmissionStore();
 
   const [selectedEnterpriseIds, setSelectedEnterpriseIds] = useState<string[]>([]);
+  const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
+  const [selectedScales, setSelectedScales] = useState<string[]>([]);
   const [industryCompareEnterpriseId, setIndustryCompareEnterpriseId] = useState<string | null>(
     enterprises.length > 0 ? enterprises[0].id : null
   );
@@ -62,6 +101,9 @@ export default function Analysis() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
   const [enterpriseDropdownOpen, setEnterpriseDropdownOpen] = useState(false);
+  const [industryDropdownOpen, setIndustryDropdownOpen] = useState(false);
+  const [scaleDropdownOpen, setScaleDropdownOpen] = useState(false);
+  const [expandedAnomalyIds, setExpandedAnomalyIds] = useState<Set<string>>(new Set());
 
   const getLast12Months = () => {
     const periods: string[] = [];
@@ -79,10 +121,18 @@ export default function Analysis() {
     return emissionData.filter((d) => d.period >= startMonth && d.period <= endMonth);
   }, [emissionData, startMonth, endMonth]);
 
+  const filterEnterprise = useMemo(() => {
+    return (ent: Enterprise) => {
+      if (selectedIndustries.length > 0 && !selectedIndustries.includes(ent.industry)) return false;
+      if (selectedScales.length > 0 && !selectedScales.includes(ent.scale)) return false;
+      return true;
+    };
+  }, [selectedIndustries, selectedScales]);
+
   const industryCompareData = useMemo(() => {
-    const industries = Array.from(new Set(enterprises.map((e) => e.industry)));
+    const industries = Array.from(new Set(enterprises.filter(filterEnterprise).map((e) => e.industry)));
     const industryAverages = industries.map((industry) => {
-      const industryEnterprises = enterprises.filter((e) => e.industry === industry);
+      const industryEnterprises = enterprises.filter((e) => e.industry === industry && filterEnterprise(e));
       const industryEmissions = industryEnterprises.flatMap((ent) =>
         filteredEmissionData
           .filter((d) => d.enterpriseId === ent.id)
@@ -114,11 +164,13 @@ export default function Analysis() {
       };
     });
     return industryAverages;
-  }, [enterprises, filteredEmissionData, industryCompareEnterpriseId]);
+  }, [enterprises, filteredEmissionData, industryCompareEnterpriseId, filterEnterprise]);
 
   const trendData = useMemo(() => {
     const periods = allMonths.filter((p) => p >= startMonth && p <= endMonth);
-    const enterpriseIds = selectedEnterpriseIds.length > 0 ? selectedEnterpriseIds : enterprises.map((e) => e.id);
+    const enterpriseIds = selectedEnterpriseIds.length > 0
+      ? selectedEnterpriseIds
+      : enterprises.filter(filterEnterprise).map((e) => e.id);
 
     return periods.map((period) => {
       const monthData = filteredEmissionData.filter(
@@ -132,13 +184,41 @@ export default function Analysis() {
         范围二: parseFloat(scope2.toFixed(2)),
       };
     });
-  }, [allMonths, startMonth, endMonth, selectedEnterpriseIds, enterprises, filteredEmissionData]);
+  }, [allMonths, startMonth, endMonth, selectedEnterpriseIds, enterprises, filteredEmissionData, filterEnterprise]);
+
+  const buildEnergyBreakdown = (current: EmissionData, previous: EmissionData): EnergyDiff[] => {
+    const curResult = calculateEmission(current);
+    const prevResult = calculateEmission(previous);
+    const items = [
+      { key: 'electricity', label: '电力', icon: Zap, color: '#0EA5E9' },
+      { key: 'gas', label: '天然气', icon: Flame, color: '#F97316' },
+      { key: 'steam', label: '蒸汽', icon: Cloud, color: '#8B5CF6' },
+      { key: 'fuel', label: '燃油', icon: Fuel, color: '#EF4444' },
+    ];
+    return items.map((item) => {
+      const curVal = (current as any)[item.key] as number;
+      const prevVal = (previous as any)[item.key] as number;
+      const curEm = curResult.breakdown[item.key as keyof typeof curResult.breakdown];
+      const prevEm = prevResult.breakdown[item.key as keyof typeof prevResult.breakdown];
+      return {
+        ...item,
+        current: curVal,
+        previous: prevVal,
+        changeRate: prevVal > 0 ? parseFloat(((curVal - prevVal) / prevVal * 100).toFixed(2)) : 0,
+        emissionChange: parseFloat((curEm - prevEm).toFixed(4)),
+      };
+    }).sort((a, b) => Math.abs(b.changeRate) - Math.abs(a.changeRate));
+  };
 
   const anomalyRecords = useMemo((): AnomalyRecord[] => {
     const records: AnomalyRecord[] = [];
     const sortedPeriods = [...new Set(filteredEmissionData.map((d) => d.period))].sort();
+    const eligibleEnterprises = enterprises.filter((ent) => {
+      if (selectedEnterpriseIds.length > 0 && !selectedEnterpriseIds.includes(ent.id)) return false;
+      return filterEnterprise(ent);
+    });
 
-    enterprises.forEach((ent) => {
+    eligibleEnterprises.forEach((ent) => {
       const entData = filteredEmissionData
         .filter((d) => d.enterpriseId === ent.id)
         .sort((a, b) => a.period.localeCompare(b.period));
@@ -155,6 +235,8 @@ export default function Analysis() {
                 id: `${ent.id}-${current.period}-mom`,
                 enterpriseId: ent.id,
                 enterpriseName: ent.name,
+                industry: ent.industry,
+                scale: ent.scale,
                 period: current.period,
                 type: '环比',
                 changeRate: parseFloat(changeRate.toFixed(2)),
@@ -162,6 +244,11 @@ export default function Analysis() {
                   changeRate > 0
                     ? '排放量较上月显著上升，请关注能源消耗变化'
                     : '排放量较上月显著下降，请核实数据准确性',
+                previousPeriod: prev.period,
+                energyBreakdown: buildEnergyBreakdown(current, prev),
+                totalCurrent: currentTotal,
+                totalPrevious: prevTotal,
+                totalDiff: currentTotal - prevTotal,
               });
             }
           }
@@ -181,6 +268,8 @@ export default function Analysis() {
                   id: `${ent.id}-${current.period}-yoy`,
                   enterpriseId: ent.id,
                   enterpriseName: ent.name,
+                  industry: ent.industry,
+                  scale: ent.scale,
                   period: current.period,
                   type: '同比',
                   changeRate: parseFloat(changeRate.toFixed(2)),
@@ -188,6 +277,11 @@ export default function Analysis() {
                     changeRate > 0
                       ? '排放量较去年同期显著上升，建议排查原因'
                       : '排放量较去年同期显著下降，请确认数据',
+                  previousPeriod: yoyPeriod,
+                  energyBreakdown: buildEnergyBreakdown(current, yoyData),
+                  totalCurrent: currentTotal,
+                  totalPrevious: yoyTotal,
+                  totalDiff: currentTotal - yoyTotal,
                 });
               }
             }
@@ -197,7 +291,7 @@ export default function Analysis() {
     });
 
     return records.sort((a, b) => Math.abs(b.changeRate) - Math.abs(a.changeRate));
-  }, [enterprises, filteredEmissionData]);
+  }, [enterprises, filteredEmissionData, selectedEnterpriseIds, filterEnterprise]);
 
   const multiCompareData = useMemo(() => {
     return multiCompareIds
@@ -224,6 +318,18 @@ export default function Analysis() {
     );
   };
 
+  const handleIndustryToggle = (ind: string) => {
+    setSelectedIndustries((prev) =>
+      prev.includes(ind) ? prev.filter((x) => x !== ind) : [...prev, ind]
+    );
+  };
+
+  const handleScaleToggle = (s: string) => {
+    setSelectedScales((prev) =>
+      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
+    );
+  };
+
   const handleMultiCompareToggle = (id: string) => {
     setMultiCompareIds((prev) => {
       if (prev.includes(id)) {
@@ -239,23 +345,37 @@ export default function Analysis() {
     const data =
       selectedEnterpriseIds.length > 0
         ? enterprises.filter((e) => selectedEnterpriseIds.includes(e.id))
-        : enterprises;
+        : enterprises.filter(filterEnterprise);
     exportEnterprises(data);
   };
 
   const handleAnomalyClick = (record: AnomalyRecord) => {
-    console.log('跳转到数据填报页:', record);
+    navigate(`/data-entry?enterprise=${record.enterpriseId}&period=${record.period}`);
+  };
+
+  const toggleExpandAnomaly = (id: string) => {
+    setExpandedAnomalyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   };
 
   const selectedEnterpriseNames = selectedEnterpriseIds
-    .map((id) => enterprises.find((e) => e.id === id)?.name)
+    .map((id) => getEnterpriseById(id)?.name)
     .filter(Boolean) as string[];
+
+  const hasAnomalyFilters = selectedIndustries.length > 0 || selectedScales.length > 0 || selectedEnterpriseIds.length > 0;
 
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-zinc-900">对比分析</h1>
-        <p className="text-sm text-zinc-500 mt-1">多维度对比分析企业碳排放数据，洞察异常波动</p>
+        <p className="text-sm text-zinc-500 mt-1">多维度对比分析企业碳排放数据，洞察异常波动并溯源联动</p>
       </div>
 
       <div className="card p-5">
@@ -267,10 +387,10 @@ export default function Analysis() {
             </label>
             <div className="relative">
               <button
-                onClick={() => setEnterpriseDropdownOpen(!enterpriseDropdownOpen)}
+                onClick={() => { setEnterpriseDropdownOpen(!enterpriseDropdownOpen); setIndustryDropdownOpen(false); setScaleDropdownOpen(false); }}
                 className="w-full flex items-center justify-between px-3 py-2 border border-zinc-200 rounded-lg bg-white hover:border-zinc-300 transition-colors"
               >
-                <span className="text-sm text-zinc-600 truncate">
+                <span className={cn('text-sm truncate text-left', selectedEnterpriseNames.length > 0 ? 'text-zinc-800' : 'text-zinc-500')}>
                   {selectedEnterpriseNames.length > 0
                     ? selectedEnterpriseNames.join('、')
                     : '全部企业'}
@@ -288,7 +408,10 @@ export default function Analysis() {
                     <button
                       key={ent.id}
                       onClick={() => handleEnterpriseToggle(ent.id)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-zinc-50 transition-colors text-left"
+                      className={cn(
+                        'w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-zinc-50 transition-colors text-left',
+                        !filterEnterprise(ent) && selectedEnterpriseIds.length === 0 && hasAnomalyFilters && 'opacity-40'
+                      )}
                     >
                       <div
                         className={cn(
@@ -303,6 +426,109 @@ export default function Analysis() {
                         )}
                       </div>
                       <span className="text-zinc-700 truncate">{ent.name}</span>
+                      <span className="ml-auto text-xs text-zinc-400 flex-shrink-0">{ent.industry} · {ent.scale}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="w-[180px]">
+            <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+              <Factory className="w-4 h-4 inline mr-1" />
+              行业筛选
+            </label>
+            <div className="relative">
+              <button
+                onClick={() => { setIndustryDropdownOpen(!industryDropdownOpen); setEnterpriseDropdownOpen(false); setScaleDropdownOpen(false); }}
+                className={cn(
+                  'w-full flex items-center justify-between px-3 py-2 border border-zinc-200 rounded-lg bg-white hover:border-zinc-300 transition-colors',
+                  selectedIndustries.length > 0 && 'text-zinc-800'
+                )}
+              >
+                <span className={cn('text-sm truncate text-left', selectedIndustries.length === 0 && 'text-zinc-500')}>
+                  {selectedIndustries.length === 0 ? '全部行业' : `已选 ${selectedIndustries.length} 个`}
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'w-4 h-4 text-zinc-400 flex-shrink-0 ml-2 transition-transform',
+                    industryDropdownOpen && 'rotate-180'
+                  )}
+                />
+              </button>
+              {industryDropdownOpen && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg max-h-60 overflow-y-auto animate-fade-in">
+                  {INDUSTRIES.map((ind) => (
+                    <button
+                      key={ind}
+                      onClick={() => handleIndustryToggle(ind)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-zinc-50 transition-colors text-left"
+                    >
+                      <div
+                        className={cn(
+                          'w-4 h-4 rounded border flex items-center justify-center flex-shrink-0',
+                          selectedIndustries.includes(ind)
+                            ? 'bg-primary-500 border-primary-500'
+                            : 'border-zinc-300'
+                        )}
+                      >
+                        {selectedIndustries.includes(ind) && (
+                          <Check className="w-3 h-3 text-white" />
+                        )}
+                      </div>
+                      <span className="text-zinc-700 truncate">{ind}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="w-[180px]">
+            <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+              <Layers className="w-4 h-4 inline mr-1" />
+              企业规模
+            </label>
+            <div className="relative">
+              <button
+                onClick={() => { setScaleDropdownOpen(!scaleDropdownOpen); setEnterpriseDropdownOpen(false); setIndustryDropdownOpen(false); }}
+                className={cn(
+                  'w-full flex items-center justify-between px-3 py-2 border border-zinc-200 rounded-lg bg-white hover:border-zinc-300 transition-colors',
+                  selectedScales.length > 0 && 'text-zinc-800'
+                )}
+              >
+                <span className={cn('text-sm truncate text-left', selectedScales.length === 0 && 'text-zinc-500')}>
+                  {selectedScales.length === 0 ? '全部规模' : `已选 ${selectedScales.length} 个`}
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'w-4 h-4 text-zinc-400 flex-shrink-0 ml-2 transition-transform',
+                    scaleDropdownOpen && 'rotate-180'
+                  )}
+                />
+              </button>
+              {scaleDropdownOpen && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg max-h-60 overflow-y-auto animate-fade-in">
+                  {SCALES.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => handleScaleToggle(s)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-zinc-50 transition-colors text-left"
+                    >
+                      <div
+                        className={cn(
+                          'w-4 h-4 rounded border flex items-center justify-center flex-shrink-0',
+                          selectedScales.includes(s)
+                            ? 'bg-primary-500 border-primary-500'
+                            : 'border-zinc-300'
+                        )}
+                      >
+                        {selectedScales.includes(s) && (
+                          <Check className="w-3 h-3 text-white" />
+                        )}
+                      </div>
+                      <span className="text-zinc-700 truncate">{s}型</span>
                     </button>
                   ))}
                 </div>
@@ -338,6 +564,20 @@ export default function Analysis() {
             />
           </div>
 
+          {hasAnomalyFilters && (
+            <button
+              onClick={() => {
+                setSelectedEnterpriseIds([]);
+                setSelectedIndustries([]);
+                setSelectedScales([]);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50 rounded-lg transition-colors"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+              清除筛选
+            </button>
+          )}
+
           <button
             onClick={handleExportEnterprises}
             className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-medium hover:bg-primary-600 transition-colors"
@@ -346,6 +586,15 @@ export default function Analysis() {
             导出企业清单
           </button>
         </div>
+        {hasAnomalyFilters && (
+          <div className="mt-3 pt-3 border-t border-zinc-100 flex flex-wrap gap-2 items-center text-xs text-zinc-500">
+            <span className="text-zinc-600 font-medium">筛选条件：</span>
+            {selectedEnterpriseIds.length > 0 && <span className="px-2 py-0.5 bg-primary-50 text-primary-700 rounded">企业 {selectedEnterpriseIds.length} 家</span>}
+            {selectedIndustries.length > 0 && <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded">行业 {selectedIndustries.join('/')}</span>}
+            {selectedScales.length > 0 && <span className="px-2 py-0.5 bg-orange-50 text-orange-700 rounded">规模 {selectedScales.join('/')}</span>}
+            <span>· 异常 {anomalyRecords.length} 条</span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -357,7 +606,7 @@ export default function Analysis() {
               onChange={(e) => setIndustryCompareEnterpriseId(e.target.value || null)}
               className="px-3 py-1.5 border border-zinc-200 rounded-lg text-sm bg-white hover:border-zinc-300 focus:outline-none focus:border-primary-500"
             >
-              {enterprises.map((ent) => (
+              {enterprises.filter(filterEnterprise).map((ent) => (
                 <option key={ent.id} value={ent.id}>
                   {ent.name}
                 </option>
@@ -474,42 +723,172 @@ export default function Analysis() {
             <span className="px-2 py-0.5 bg-accent-orange/10 text-accent-orange text-xs font-medium rounded-full">
               {anomalyRecords.length} 条
             </span>
+            {anomalyRecords.length > 0 && (
+              <span className="ml-auto text-xs text-zinc-500 flex items-center gap-1">
+                <ExternalLink className="w-3 h-3" />
+                点击跳转到对应填报页
+              </span>
+            )}
           </div>
-          <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+          <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
             {anomalyRecords.length === 0 ? (
-              <div className="text-center py-12 text-zinc-400 text-sm">暂无异常波动记录</div>
+              <div className="text-center py-12 text-zinc-400 text-sm">
+                {hasAnomalyFilters ? '当前筛选条件下无异常波动记录' : '暂无异常波动记录'}
+              </div>
             ) : (
-              anomalyRecords.map((record) => (
-                <div
-                  key={record.id}
-                  onClick={() => handleAnomalyClick(record)}
-                  className="p-4 rounded-xl border border-zinc-100 hover:border-primary-200 hover:bg-primary-50/30 cursor-pointer transition-all group"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <span className="font-medium text-zinc-900">{record.enterpriseName}</span>
-                      <span className="mx-2 text-zinc-300">|</span>
-                      <span className="text-sm text-zinc-500">{record.period}</span>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-zinc-300 group-hover:text-primary-500 transition-colors" />
-                  </div>
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 text-xs rounded">
-                      {record.type}
-                    </span>
-                    <span
-                      className={cn(
-                        'text-sm font-semibold',
-                        Math.abs(record.changeRate) > 30 ? 'text-red-600' : 'text-zinc-600'
-                      )}
+              anomalyRecords.map((record) => {
+                const expanded = expandedAnomalyIds.has(record.id);
+                const topDriver = record.energyBreakdown.find(e => Math.abs(e.changeRate) > 0);
+                return (
+                  <div
+                    key={record.id}
+                    className="rounded-xl border border-zinc-100 overflow-hidden hover:border-primary-200 transition-all group"
+                  >
+                    <div
+                      onClick={() => handleAnomalyClick(record)}
+                      className="p-4 hover:bg-primary-50/30 cursor-pointer transition-all"
                     >
-                      {record.changeRate > 0 ? '+' : ''}
-                      {formatNumber(record.changeRate, 2)}%
-                    </span>
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <span className="font-medium text-zinc-900 truncate">{record.enterpriseName}</span>
+                          <span className="text-zinc-300 flex-shrink-0">|</span>
+                          <span className="text-sm text-zinc-500 flex-shrink-0">{record.period}</span>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                          <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 text-[11px] rounded">
+                            {record.industry}
+                          </span>
+                          <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 text-[11px] rounded">
+                            {record.scale}
+                          </span>
+                          <ExternalLink className="w-4 h-4 text-zinc-300 group-hover:text-primary-500 transition-colors" />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 text-xs rounded">
+                          {record.type}{record.previousPeriod ? `(${record.previousPeriod})` : ''}
+                        </span>
+                        <span
+                          className={cn(
+                            'text-sm font-semibold flex items-center gap-0.5',
+                            Math.abs(record.changeRate) > 30 ? 'text-red-600' : 'text-zinc-600'
+                          )}
+                        >
+                          {record.changeRate > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                          {record.changeRate > 0 ? '+' : ''}
+                          {formatNumber(record.changeRate, 2)}%
+                        </span>
+                        <span className="text-xs text-zinc-400 font-mono">
+                          {formatEmission(record.totalPrevious)} → {formatEmission(record.totalCurrent)}
+                          <span className={record.totalDiff >= 0 ? 'text-red-500' : 'text-green-500'}>
+                            ({record.totalDiff >= 0 ? '+' : ''}{record.totalDiff.toFixed(2)})
+                          </span>
+                        </span>
+                      </div>
+                      <p className="text-sm text-zinc-500 mb-3">{record.message}</p>
+                      {topDriver && (
+                        <div className="flex items-center gap-2 text-xs text-zinc-500 mb-2">
+                          <span className="px-1.5 py-0.5 bg-primary-50 text-primary-700 rounded font-medium">
+                            主要变化来源
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <topDriver.icon className="w-3 h-3" style={{ color: topDriver.color }} />
+                            {topDriver.label}
+                          </span>
+                          <span className={cn('font-mono font-medium', topDriver.changeRate > 0 ? 'text-red-500' : 'text-green-500')}>
+                            {topDriver.changeRate > 0 ? '+' : ''}{formatNumber(topDriver.changeRate, 1)}%
+                          </span>
+                          <span className="text-zinc-400">
+                            · 排放 {topDriver.emissionChange >= 0 ? '+' : ''}{topDriver.emissionChange.toFixed(3)} tCO₂
+                          </span>
+                        </div>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleExpandAnomaly(record.id); }}
+                        className="mt-2 flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium"
+                      >
+                        {expanded ? (
+                          <><ChevronUp className="w-3 h-3" />收起能源明细</>
+                        ) : (
+                          <><ChevronDown className="w-3 h-3" />查看全部能源变化明细</>
+                        )}
+                      </button>
+                    </div>
+
+                    {expanded && (
+                      <div className="bg-zinc-50/80 px-4 pb-4 pt-1 border-t border-zinc-100">
+                        <div className="text-xs font-medium text-zinc-600 mb-2 mt-2">
+                          能源分项变化对比（{record.previousPeriod || '上期'} → {record.period}）
+                        </div>
+                        <div className="space-y-2">
+                          {record.energyBreakdown.map((e) => {
+                            const isSignificant = Math.abs(e.changeRate) > 30;
+                            return (
+                              <div key={e.key} className="p-2.5 bg-white rounded-lg border border-zinc-100">
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <e.icon className="w-3.5 h-3.5" style={{ color: e.color }} />
+                                    <span className="text-xs font-medium text-zinc-800">{e.label}</span>
+                                    {isSignificant && (
+                                      <span className={cn(
+                                        'px-1 py-px rounded text-[10px] font-semibold',
+                                        e.changeRate > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'
+                                      )}>
+                                        异常
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className={cn(
+                                    'text-xs font-mono font-semibold',
+                                    e.changeRate > 0 ? 'text-red-600' : e.changeRate < 0 ? 'text-green-600' : 'text-zinc-500'
+                                  )}>
+                                    {e.changeRate > 0 ? '+' : ''}{formatNumber(e.changeRate, 1)}%
+                                  </span>
+                                </div>
+                                <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden mb-1.5">
+                                  <div
+                                    className="h-full rounded-full transition-all"
+                                    style={{
+                                      width: `${Math.min(Math.abs(e.changeRate), 100)}%`,
+                                      backgroundColor: e.changeRate >= 0 ? (isSignificant ? '#EF4444' : '#F97316') : (isSignificant ? '#10B981' : '#0EA5E9'),
+                                    }}
+                                  />
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                                  <div>
+                                    <div className="text-zinc-400">上期</div>
+                                    <div className="font-mono text-zinc-700">{formatNumber(e.previous, 0)}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-zinc-400">本期</div>
+                                    <div className="font-mono text-zinc-800 font-medium">{formatNumber(e.current, 0)}</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-zinc-400">排放变化</div>
+                                    <div className={cn(
+                                      'font-mono font-medium',
+                                      e.emissionChange >= 0 ? 'text-red-600' : 'text-green-600'
+                                    )}>
+                                      {e.emissionChange >= 0 ? '+' : ''}{e.emissionChange.toFixed(3)}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleAnomalyClick(record); }}
+                          className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary-500 text-white text-xs font-medium rounded-lg hover:bg-primary-600 transition-colors"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          跳转到数据填报页查看完整记录
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <p className="text-sm text-zinc-500">{record.message}</p>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -536,7 +915,7 @@ export default function Analysis() {
               </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {enterprises.map((ent) => {
+              {enterprises.filter(filterEnterprise).map((ent) => {
                 const selected = multiCompareIds.includes(ent.id);
                 const disabled = !selected && multiCompareIds.length >= 5;
                 return (

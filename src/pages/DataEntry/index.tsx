@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Building2,
   Calendar,
@@ -60,9 +61,14 @@ export default function DataEntry() {
   const { enterprises, currentEnterpriseId, setCurrentEnterprise } = useEnterpriseStore();
   const { getData, saveData, submitData, getEnterpriseAllData } = useEmissionStore();
   const { addToast } = useUIStore();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string>(currentEnterpriseId || '');
-  const [period, setPeriod] = useState<string>(getCurrentMonth());
+  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string>(
+    searchParams.get('enterprise') || currentEnterpriseId || ''
+  );
+  const [period, setPeriod] = useState<string>(
+    searchParams.get('period') || getCurrentMonth()
+  );
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [selectedHistoryPeriod, setSelectedHistoryPeriod] = useState('');
@@ -77,6 +83,16 @@ export default function DataEntry() {
   const isLocked = existingData?.status === 'locked';
   const isApproved = existingData?.status === 'approved';
   const isReadOnly = isLocked || isApproved;
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (selectedEnterpriseId) params.set('enterprise', selectedEnterpriseId);
+    if (period) params.set('period', period);
+    const str = params.toString();
+    if (str && searchParams.toString() !== str) {
+      setSearchParams(params, { replace: true });
+    }
+  }, [selectedEnterpriseId, period]);
 
   useEffect(() => {
     if (selectedEnterpriseId && period) {
@@ -304,12 +320,14 @@ export default function DataEntry() {
             <label className="label">
               <Building2 className="inline w-4 h-4 mr-1" />
               企业选择
+              {isReadOnly && (
+                <span className="text-xs text-zinc-500 ml-2">（可切换查看其他记录）</span>
+              )}
             </label>
             <select
               value={selectedEnterpriseId}
               onChange={handleEnterpriseChange}
-              disabled={isReadOnly}
-              className={cn('input-field', isReadOnly && 'bg-zinc-50 cursor-not-allowed')}
+              className="input-field"
             >
               <option value="">请选择企业</option>
               {enterprises.map((ent) => (
@@ -324,13 +342,15 @@ export default function DataEntry() {
             <label className="label">
               <Calendar className="inline w-4 h-4 mr-1" />
               填报月份
+              {isReadOnly && (
+                <span className="text-xs text-zinc-500 ml-2">（可切换查看其他记录）</span>
+              )}
             </label>
             <input
               type="month"
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
-              disabled={isReadOnly}
-              className={cn('input-field', isReadOnly && 'bg-zinc-50 cursor-not-allowed')}
+              className="input-field"
             />
           </div>
 

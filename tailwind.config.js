@@ -33,6 +33,7 @@ export default {
       animation: {
         "fade-in": "fadeIn 0.3s ease-out",
         "slide-in-right": "slideInRight 0.3s ease-out",
+        "slide-in-left": "slideInLeft 0.3s ease-out",
         "slide-up": "slideUp 0.4s ease-out",
         "pulse-soft": "pulseSoft 2s ease-in-out infinite",
       },
@@ -42,6 +43,10 @@ export default {
           "100%": { opacity: "1" },
         },
         slideInRight: {
+          "0%": { transform: "translateX(100%)", opacity: "0" },
+          "100%": { transform: "translateX(0)", opacity: "1" },
+        },
+        slideInLeft: {
           "0%": { transform: "translateX(100%)", opacity: "0" },
           "100%": { transform: "translateX(0)", opacity: "1" },
         },
