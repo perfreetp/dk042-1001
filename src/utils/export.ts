@@ -127,6 +127,18 @@ interface AnomalyInfo {
   template?: 'park' | 'enterprise';
   selectedEnterpriseName?: string;
   factorVersionSummary?: string;
+  attachments?: {
+    period: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+    uploadTime: string;
+  }[];
+  monthlyTrend?: {
+    period: string;
+    scope1: number;
+    scope2: number;
+  }[];
 }
 
 export function exportEmissionReport(
@@ -175,6 +187,20 @@ export function exportEmissionReport(
         item.scope1.toFixed(2),
         item.scope2.toFixed(2),
         item.total.toFixed(2),
+      ]));
+    });
+  }
+
+  if (anomalyInfo && anomalyInfo.template === 'enterprise' && anomalyInfo.monthlyTrend && anomalyInfo.monthlyTrend.length > 0) {
+    rows.push(buildEmptyRow());
+    rows.push(buildSectionTitleRow('【月度排放趋势】'));
+    rows.push(buildRowFromArray(['统计月份', '范围一(tCO₂)', '范围二(tCO₂)', '总排放(tCO₂)']));
+    anomalyInfo.monthlyTrend.forEach((m) => {
+      rows.push(buildRowFromArray([
+        m.period,
+        m.scope1.toFixed(2),
+        m.scope2.toFixed(2),
+        (m.scope1 + m.scope2).toFixed(2),
       ]));
     });
   }
@@ -255,6 +281,24 @@ export function exportEmissionReport(
         e.current,
         e.changeRate.toFixed(2),
         e.emissionChange.toFixed(2),
+      ]));
+    });
+  }
+
+  if (anomalyInfo && anomalyInfo.template === 'enterprise' && anomalyInfo.attachments && anomalyInfo.attachments.length > 0) {
+    rows.push(buildEmptyRow());
+    rows.push(buildSectionTitleRow('【凭证附件清单】'));
+    rows.push(buildRowFromArray(['统计月份', '文件名称', '文件类型', '文件大小', '上传时间']));
+    anomalyInfo.attachments.forEach((a) => {
+      const sizeStr = a.fileSize > 1024
+        ? `${(a.fileSize / 1024).toFixed(2)} KB`
+        : `${a.fileSize} B`;
+      rows.push(buildRowFromArray([
+        a.period,
+        a.fileName,
+        a.fileType,
+        sizeStr,
+        formatDateTime(a.uploadTime),
       ]));
     });
   }

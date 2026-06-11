@@ -1,4 +1,4 @@
-import type { Enterprise, EmissionData, Attachment, AuditRecord } from '@/types';
+import type { Enterprise, EmissionData, Attachment, AuditRecord, EmissionFactor, ReportArchive } from '@/types';
 
 const STORAGE_KEY = 'carbon_emission_mock_data';
 
@@ -7,6 +7,8 @@ export interface PersistedData {
   emissionData: EmissionData[];
   attachments: Attachment[];
   auditRecords: AuditRecord[];
+  factors: EmissionFactor[];
+  archives: ReportArchive[];
 }
 
 export function readPersistedData(): PersistedData | null {
@@ -31,6 +33,8 @@ export function writePersistedData(data: Partial<PersistedData>): void {
       emissionData: data.emissionData || existing?.emissionData || [],
       attachments: data.attachments || existing?.attachments || [],
       auditRecords: data.auditRecords || existing?.auditRecords || [],
+      factors: data.factors || existing?.factors || [],
+      archives: data.archives || existing?.archives || [],
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
   } catch {

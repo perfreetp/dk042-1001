@@ -41,6 +41,8 @@ import StatusBadge from '@/components/StatusBadge';
 import { useEmissionStore } from '@/store/emission';
 import { useEnterpriseStore } from '@/store/enterprise';
 import { useAuditStore } from '@/store/audit';
+import { useReportStore } from '@/store/report';
+import { useUIStore } from '@/store/ui';
 import { calculateEmission, calculateEmissionWithVersion, getFactorSummaryLabel } from '@/utils/calculator';
 import { formatEmission, formatNumber, formatDateTime } from '@/utils/formatter';
 import { exportEmissionReport } from '@/utils/export';
@@ -96,6 +98,8 @@ export default function Results() {
   const { emissionData } = useEmissionStore();
   const { enterprises, getEnterpriseById } = useEnterpriseStore();
   const { getAttachments } = useAuditStore();
+  const { addArchive } = useReportStore();
+  const { currentUser, addToast } = useUIStore();
 
   const [template, setTemplate] = useState<ReportTemplate>('park');
   const [selectedSingleEnterpriseId, setSelectedSingleEnterpriseId] = useState<string>('');
@@ -415,12 +419,91 @@ export default function Results() {
   };
 
   const handleExport = () => {
+    const entName = template === 'enterprise' && selectedSingleEnterpriseId
+      ? getEnterpriseById(selectedSingleEnterpriseId)?.name || ''
+      : '';
+
+    const firstRow = filteredData[0];
+    const factorVersionMap = firstRow?.result.factorVersionMap;
+    const factorDetail = factorVersionMap || {
+      electricity: { version: '默认', value: 0, effectiveMonth: '2024-01' },
+      gas: { version: '默认', value: 0, effectiveMonth: '2024-01' },
+      steam: { version: '默认', value: 0, effectiveMonth: '2024-01' },
+      fuel: { version: '默认', value: 0, effectiveMonth: '2024-01' },
+    };
+
+    const dataRows = filteredData.map((row) => ({
+      enterpriseId: row.enterpriseId,
+      enterpriseName: row.enterpriseName,
+      industry: row.industry,
+      period: row.period,
+      electricity: row.electricity,
+      gas: row.gas,
+      steam: row.steam,
+      fuel: row.fuel,
+      production: row.production,
+      scope1: row.result.scope1,
+      scope2: row.result.scope2,
+      total: row.result.total,
+      breakdownElectricity: row.result.breakdown.electricity,
+      breakdownGas: row.result.breakdown.gas,
+      breakdownSteam: row.result.breakdown.steam,
+      breakdownFuel: row.result.breakdown.fuel,
+      status: row.status,
+      submitTime: row.submitTime,
+      auditor: row.auditor,
+      auditOpinion: row.auditOpinion,
+    }));
+
+    const archiveAnomalies = [
+      ...anomalies.map((a) => ({
+        period: a.period,
+        type: a.type,
+        changeRate: a.changeRate,
+        message: a.message,
+      })),
+      ...energyBreakdownDetails.map((e) => ({
+        period: e.period,
+        type: '环比' as const,
+        changeRate: e.changeRate,
+        message: `${e.energyLabel}变化 ${e.changeRate > 0 ? '+' : ''}${e.changeRate.toFixed(1)}%，排放变化 ${e.emissionChange > 0 ? '+' : ''}${e.emissionChange.toFixed(2)} tCO₂`,
+        energyKey: e.energyKey,
+        energyLabel: e.energyLabel,
+        current: e.current,
+        previous: e.previous,
+        emissionChange: e.emissionChange,
+      })),
+    ];
+
+    let archiveAttachments: any[] = [];
+    if (template === 'enterprise' && selectedSingleEnterpriseId) {
+      const periodSet = new Set(filteredData.map((d) => d.period));
+      Array.from(periodSet).sort().forEach((period) => {
+        const atts = getAttachments(selectedSingleEnterpriseId, period);
+        atts.forEach((a) => {
+          archiveAttachments.push({
+            period,
+            fileName: a.fileName,
+            fileType: a.fileType,
+            fileSize: a.fileSize,
+            uploadTime: a.uploadTime,
+          });
+        });
+      });
+    }
+
+    const monthlyTrendExport = monthlyTrendData.map((m) => ({
+      period: m.period,
+      scope1: m['范围一'],
+      scope2: m['范围二'],
+    }));
+
     const anomalyInfo = {
       anomalies,
       energyBreakdownDetails,
       filters: {
         enterprises: template === 'enterprise'
-          ? (getEnterpriseById(selectedSingleEnterpriseId)?.name || '指定企业')
+          ? (entName || '指定企业')
           : (selectedEnterpriseIds.length > 0
             ? selectedEnterpriseIds.map(id => getEnterpriseById(id)?.name || id).join('、')
             : '全部企业'),
@@ -435,12 +518,53 @@ export default function Results() {
       },
       industrySummary,
       template,
-      selectedEnterpriseName: template === 'enterprise' && selectedSingleEnterpriseId
-        ? getEnterpriseById(selectedSingleEnterpriseId)?.name || ''
-        : undefined,
+      selectedEnterpriseName: entName,
       factorVersionSummary,
+      attachments: archiveAttachments,
+      monthlyTrend: monthlyTrendExport,
     };
+
+    const reportTitle = template === 'enterprise'
+      ? `${entName || '企业'}_碳排放报告_${startMonth || '最早'}-${endMonth || '最新'}`
+      : `园区碳排放汇总报告_${startMonth || '最早'}-${endMonth || '最新'}`;
+
+    addArchive({
+      title: reportTitle,
+      template,
+      enterpriseId: template === 'enterprise' ? selectedSingleEnterpriseId : undefined,
+      enterpriseName: template === 'enterprise' ? entName : undefined,
+      industries: selectedIndustries.length > 0 ? [...selectedIndustries] : [],
+      startMonth: startMonth || (filteredData.length > 0 ? filteredData[filteredData.length - 1].period : ''),
+      endMonth: endMonth || (filteredData.length > 0 ? filteredData[0].period : ''),
+      recordCount: filteredData.length,
+      generatedBy: currentUser.name,
+      factorVersion: {
+        summaryLabel: factorVersionSummary,
+        detail: factorDetail as any,
+      },
+      filterSnapshot: {
+        enterpriseIds: template === 'park' ? [...selectedEnterpriseIds] : selectedSingleEnterpriseId ? [selectedSingleEnterpriseId] : [],
+        industries: selectedIndustries.length > 0 ? [...selectedIndustries] : [],
+        startMonth,
+        endMonth,
+        enterpriseName: entName,
+      },
+      summary: {
+        scope1: summary.current.scope1,
+        scope2: summary.current.scope2,
+        total: summary.current.total,
+        breakdown: { ...summary.current.breakdown },
+        industrySummary: industrySummary.map((i) => ({ ...i })),
+        anomalyCount: anomalies.length + energyBreakdownDetails.length,
+      },
+      dataRows,
+      attachments: archiveAttachments,
+      anomalies: archiveAnomalies,
+      monthlyTrend: monthlyTrendExport,
+    });
+
     exportEmissionReport(filteredData, anomalyInfo);
+    addToast('报告导出成功，已自动归档至"报告归档"', 'success');
   };
 
   const SortHeader = ({ label, sortKeyName }: { label: string; sortKeyName: SortKey }) => (

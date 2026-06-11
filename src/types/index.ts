@@ -65,6 +65,7 @@ export interface AuditRecord {
   action: 'approve' | 'reject' | 'submit' | 'lock';
   opinion?: string;
   timestamp: string;
+  previousStatus?: EmissionStatus;
 }
 
 export interface Attachment {
@@ -84,6 +85,8 @@ export interface Attachment {
 
 export type EmissionFactorKey = 'electricity' | 'gas' | 'steam' | 'fuel';
 
+export type FactorStatus = 'pending' | 'approved' | 'rejected';
+
 export interface EmissionFactor {
   id: string;
   key: EmissionFactorKey;
@@ -94,6 +97,12 @@ export interface EmissionFactor {
   value: number;
   createdAt: string;
   note?: string;
+  status: FactorStatus;
+  submittedBy: string;
+  submittedAt: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewOpinion?: string;
 }
 
 export interface EmissionResultWithVersion extends EmissionResult {
@@ -115,4 +124,92 @@ export interface Toast {
   id: string;
   message: string;
   type: ToastType;
+}
+
+export type ReportTemplate = 'park' | 'enterprise';
+
+export interface ReportArchiveFilterSnapshot {
+  enterpriseIds: string[];
+  industries: string[];
+  startMonth: string;
+  endMonth: string;
+  enterpriseName?: string;
+}
+
+export interface ReportArchiveFactorSnapshot {
+  summaryLabel: string;
+  detail: Record<EmissionFactorKey, { version: string; value: number; effectiveMonth: string }>;
+}
+
+export interface ReportArchiveSummary {
+  scope1: number;
+  scope2: number;
+  total: number;
+  breakdown: { electricity: number; gas: number; steam: number; fuel: number };
+  industrySummary: { industry: string; scope1: number; scope2: number; total: number; count: number }[];
+  anomalyCount: number;
+}
+
+export interface ReportArchiveDataRow {
+  enterpriseId: string;
+  enterpriseName: string;
+  industry: string;
+  period: string;
+  electricity: number;
+  gas: number;
+  steam: number;
+  fuel: number;
+  production: number;
+  scope1: number;
+  scope2: number;
+  total: number;
+  breakdownElectricity: number;
+  breakdownGas: number;
+  breakdownSteam: number;
+  breakdownFuel: number;
+  status: EmissionStatus;
+  submitTime?: string;
+  auditor?: string;
+  auditOpinion?: string;
+}
+
+export interface ReportArchiveAttachment {
+  period: string;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  uploadTime: string;
+}
+
+export interface ReportArchiveAnomaly {
+  period: string;
+  type: '同比' | '环比';
+  changeRate: number;
+  message: string;
+  energyKey?: string;
+  energyLabel?: string;
+  current?: number;
+  previous?: number;
+  emissionChange?: number;
+}
+
+export interface ReportArchive {
+  id: string;
+  title: string;
+  template: ReportTemplate;
+  enterpriseId?: string;
+  enterpriseName?: string;
+  industries: string[];
+  startMonth: string;
+  endMonth: string;
+  recordCount: number;
+  generatedBy: string;
+  generatedAt: string;
+  factorVersion: ReportArchiveFactorSnapshot;
+  filterSnapshot: ReportArchiveFilterSnapshot;
+  summary: ReportArchiveSummary;
+  dataRows: ReportArchiveDataRow[];
+  attachments: ReportArchiveAttachment[];
+  anomalies: ReportArchiveAnomaly[];
+  monthlyTrend: { period: string; scope1: number; scope2: number }[];
 }

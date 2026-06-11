@@ -17,5 +17,7 @@ export function persistAll() {
     emissionData: state.emissionData,
     attachments: state.attachments,
     auditRecords: state.auditRecords,
+    factors: state.factors,
+    archives: state.archives,
   });
 }

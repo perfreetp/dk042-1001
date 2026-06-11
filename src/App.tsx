@@ -8,6 +8,7 @@ import Audit from "@/pages/Audit";
 import Results from "@/pages/Results";
 import Analysis from "@/pages/Analysis";
 import FactorConfig from "@/pages/FactorConfig";
+import ReportArchive from "@/pages/ReportArchive";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/results" element={<Results />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/factor-config" element={<FactorConfig />} />
+          <Route path="/report-archive" element={<ReportArchive />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

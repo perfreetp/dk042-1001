@@ -15,12 +15,18 @@ import {
   ChevronUp,
   Layers,
   FileSearch,
+  Clock,
+  XCircle,
+  Send,
+  ThumbsUp,
+  ThumbsDown,
+  User,
 } from 'lucide-react';
 import { useFactorStore, FACTOR_META } from '@/store/factor';
 import { useUIStore } from '@/store/ui';
 import { formatDateTime, formatNumber } from '@/utils/formatter';
 import { cn } from '@/lib/utils';
-import type { EmissionFactor, EmissionFactorKey } from '@/types';
+import type { EmissionFactor, EmissionFactorKey, FactorStatus } from '@/types';
 
 const ICON_MAP: Record<EmissionFactorKey, any> = {
   electricity: Zap,
@@ -36,13 +42,42 @@ const COLOR_MAP: Record<EmissionFactorKey, string> = {
   fuel: 'text-red-600 bg-red-50 border-red-200',
 };
 
+const STATUS_LABEL: Record<FactorStatus, string> = {
+  pending: '待审批',
+  approved: '已生效',
+  rejected: '已驳回',
+};
+
+const STATUS_COLOR: Record<FactorStatus, string> = {
+  pending: 'bg-amber-100 text-amber-700 border-amber-200',
+  approved: 'bg-green-100 text-green-700 border-green-200',
+  rejected: 'bg-red-100 text-red-700 border-red-200',
+};
+
+const STATUS_ICON: Record<FactorStatus, any> = {
+  pending: Clock,
+  approved: CheckCircle2,
+  rejected: XCircle,
+};
+
 const ENERGY_KEYS: EmissionFactorKey[] = ['electricity', 'gas', 'steam', 'fuel'];
 
 export default function FactorConfig() {
-  const { factors, addFactor, removeFactor, getLatestFactors, getEffectiveFactorsForPeriod, getFactorHistory } = useFactorStore();
+  const {
+    factors,
+    submitFactor,
+    approveFactor,
+    rejectFactor,
+    removeFactor,
+    getLatestApprovedFactors,
+    getEffectiveFactorsForPeriod,
+    getFactorHistory,
+    getFactorsByStatus,
+    getPendingFactors,
+  } = useFactorStore();
   const { addToast } = useUIStore();
 
-  const [activeTab, setActiveTab] = useState<'current' | 'history' | 'lookup'>('current');
+  const [activeTab, setActiveTab] = useState<'current' | 'history' | 'lookup' | 'pending'>('current');
   const [formKey, setFormKey] = useState<EmissionFactorKey>('electricity');
   const [formVersion, setFormVersion] = useState('');
   const [formEffectiveMonth, setFormEffectiveMonth] = useState(() => {
@@ -57,10 +92,13 @@ export default function FactorConfig() {
   });
   const [historyTab, setHistoryTab] = useState<EmissionFactorKey>('electricity');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [reviewOpinion, setReviewOpinion] = useState('');
+  const [currentUser] = useState('李主管');
 
-  const latestFactors = useMemo(() => getLatestFactors(), [getLatestFactors]);
+  const latestFactors = useMemo(() => getLatestApprovedFactors(), [getLatestApprovedFactors]);
   const lookupFactors = useMemo(() => getEffectiveFactorsForPeriod(lookupMonth), [getEffectiveFactorsForPeriod, lookupMonth]);
   const historyFactors = useMemo(() => getFactorHistory(historyTab), [getFactorHistory, historyTab]);
+  const pendingFactors = useMemo(() => getPendingFactors(), [getPendingFactors]);
 
   const groupedByKey = useMemo(() => {
     const map = new Map<EmissionFactorKey, EmissionFactor[]>();
@@ -72,7 +110,7 @@ export default function FactorConfig() {
     return map;
   }, [factors]);
 
-  const handleAdd = () => {
+  const handleSubmit = () => {
     if (!formVersion.trim()) {
       addToast('请填写版本号', 'warning');
       return;
@@ -83,19 +121,46 @@ export default function FactorConfig() {
       return;
     }
     const meta = FACTOR_META[formKey];
-    const newFactor = addFactor({
-      key: formKey,
-      label: meta.label,
-      unit: meta.unit,
-      version: formVersion.trim(),
-      effectiveMonth: formEffectiveMonth,
-      value: numValue,
-      note: formNote.trim() || undefined,
-    });
-    addToast(`${meta.label}因子 ${newFactor.version} 已发布，${newFactor.effectiveMonth} 起生效`, 'success');
+    const newFactor = submitFactor(
+      {
+        key: formKey,
+        label: meta.label,
+        unit: meta.unit,
+        version: formVersion.trim(),
+        effectiveMonth: formEffectiveMonth,
+        value: numValue,
+        note: formNote.trim() || undefined,
+      },
+      currentUser
+    );
+    addToast(`${meta.label}因子 ${newFactor.version} 已提交待审批`, 'success');
     setFormVersion('');
     setFormValue('');
     setFormNote('');
+  };
+
+  const handleApprove = (id: string, label: string, version: string) => {
+    if (!reviewOpinion.trim()) {
+      addToast('请填写审批意见', 'warning');
+      return;
+    }
+    const result = approveFactor(id, currentUser, reviewOpinion.trim());
+    if (result) {
+      addToast(`${label}因子 ${version} 审批通过，已生效`, 'success');
+      setReviewOpinion('');
+    }
+  };
+
+  const handleReject = (id: string, label: string, version: string) => {
+    if (!reviewOpinion.trim()) {
+      addToast('请填写驳回原因', 'warning');
+      return;
+    }
+    const result = rejectFactor(id, currentUser, reviewOpinion.trim());
+    if (result) {
+      addToast(`${label}因子 ${version} 已驳回`, 'info');
+      setReviewOpinion('');
+    }
   };
 
   const handleRemove = (id: string, label: string, version: string) => {
@@ -124,14 +189,15 @@ export default function FactorConfig() {
             <div>
               <h1 className="text-2xl font-bold text-zinc-900">排放因子配置</h1>
               <p className="text-sm text-zinc-500 mt-1">
-                维护电力、天然气、蒸汽、燃油等排放因子的版本与生效月份，历史月份按当时生效因子核算
+                维护电力、天然气、蒸汽、燃油等排放因子的版本与生效月份，提交审批通过后生效
               </p>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-xl">
+        <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-xl flex-wrap">
           {[
-            { key: 'current', label: '当前生效', icon: CheckCircle2 },
+            { key: 'current', label: '当前生效', icon: CheckCircle2, count: 4 },
+            { key: 'pending', label: '待审批', icon: Clock, count: pendingFactors.length, badge: pendingFactors.length > 0 },
             { key: 'history', label: '版本历史', icon: History },
             { key: 'lookup', label: '按月查询', icon: FileSearch },
           ].map((t) => (
@@ -139,7 +205,7 @@ export default function FactorConfig() {
               key={t.key}
               onClick={() => setActiveTab(t.key as any)}
               className={cn(
-                'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all',
+                'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all relative',
                 activeTab === t.key
                   ? 'bg-white text-primary-700 shadow-sm border border-zinc-200'
                   : 'text-zinc-500 hover:text-zinc-700'
@@ -147,6 +213,11 @@ export default function FactorConfig() {
             >
               <t.icon className="w-3.5 h-3.5" />
               {t.label}
+              {t.badge && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent-orange text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {(t as any).count || ''}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -177,7 +248,7 @@ export default function FactorConfig() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900/5 text-[11px] font-semibold text-zinc-700 border border-zinc-200">
+                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-100 text-green-700 border border-green-200 text-[11px] font-semibold">
                             <Tag className="w-3 h-3" />
                             {f.version}
                           </div>
@@ -201,8 +272,108 @@ export default function FactorConfig() {
               </div>
               <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 leading-relaxed">
                 <div className="font-semibold mb-1 flex items-center gap-1"><Layers className="w-3.5 h-3.5" />生效规则说明</div>
-                <p>系统根据填报月份 <strong>自动匹配 ≤ 填报月份的最新生效版本</strong>。历史数据核算将严格沿用当时生效的因子版本，新发布的因子不会影响已锁定月份的历史核算结果。</p>
+                <p>系统根据填报月份 <strong>自动匹配 ≤ 填报月份的最新已生效版本</strong>。历史数据核算将严格沿用当时生效的因子版本，新发布的因子不会影响已锁定月份的历史核算结果。</p>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'pending' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-zinc-600">
+                  共 <span className="font-semibold text-zinc-900">{pendingFactors.length}</span> 条待审批记录，审批通过后自动生效
+                </div>
+              </div>
+              {pendingFactors.length === 0 ? (
+                <div className="card p-12 text-center">
+                  <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto mb-3" />
+                  <div className="text-sm text-zinc-500">暂无待审批的因子版本</div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingFactors.map((f) => {
+                    const Icon = ICON_MAP[f.key];
+                    const isExpanded = expandedIds.has(f.id);
+                    return (
+                      <div key={f.id} className="card p-4">
+                        <div className="flex items-start gap-4">
+                          <div className={cn('w-11 h-11 rounded-xl flex items-center justify-center border flex-shrink-0', COLOR_MAP[f.key])}>
+                            <Icon className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-semibold text-zinc-900">{f.label}因子</span>
+                              <span className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-zinc-100 text-zinc-700 border border-zinc-200">{f.version}</span>
+                              <span className={cn(
+                                'inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border',
+                                STATUS_COLOR[f.status]
+                              )}>
+                                {(() => { const S = STATUS_ICON[f.status]; return <S className="w-3 h-3" />; })()}
+                                {STATUS_LABEL[f.status]}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 mb-2">
+                              <span>生效月：<span className="font-medium text-zinc-700">{f.effectiveMonth}</span></span>
+                              <span>因子值：<span className="font-mono font-medium text-zinc-700">{formatNumber(f.value, 7)}</span></span>
+                              <span className="flex items-center gap-1">
+                                <User className="w-3 h-3" />
+                                提交人：<span className="font-medium text-zinc-700">{f.submittedBy}</span>
+                              </span>
+                              <span>提交时间：<span className="text-zinc-600">{formatDateTime(f.submittedAt).slice(0, 16)}</span></span>
+                            </div>
+                            {f.note && <div className="text-xs text-zinc-500 italic mb-2">备注：{f.note}</div>}
+
+                            {isExpanded ? (
+                              <div className="mt-3 pt-3 border-t border-zinc-100 space-y-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-zinc-700 mb-1.5">审批意见</label>
+                                  <textarea
+                                    value={reviewOpinion}
+                                    onChange={(e) => setReviewOpinion(e.target.value)}
+                                    placeholder="请填写审批意见..."
+                                    rows={2}
+                                    className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 resize-none"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => handleApprove(f.id, f.label, f.version)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors"
+                                  >
+                                    <ThumbsUp className="w-4 h-4" />
+                                    审批通过
+                                  </button>
+                                  <button
+                                    onClick={() => handleReject(f.id, f.label, f.version)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
+                                  >
+                                    <ThumbsDown className="w-4 h-4" />
+                                    驳回
+                                  </button>
+                                  <button
+                                    onClick={() => toggleExpand(f.id)}
+                                    className="px-3 py-2 text-sm text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 rounded-lg transition-colors"
+                                  >
+                                    取消
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => toggleExpand(f.id)}
+                                className="mt-1 inline-flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium"
+                              >
+                                立即审批
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -232,44 +403,65 @@ export default function FactorConfig() {
                   <thead className="bg-zinc-50">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">版本</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">状态</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">生效月份</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider">因子值</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">发布时间</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">备注</th>
-                      <th className="px-4 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider">操作</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">提交人/审批人</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
                     {historyFactors.length === 0 ? (
                       <tr><td colSpan={6} className="px-4 py-12 text-center text-zinc-400 text-sm">暂无版本记录</td></tr>
                     ) : historyFactors.map((f, i) => {
-                      const isLatest = i === 0;
+                      const isLatestApproved = f.status === 'approved' && i === historyFactors.findIndex(x => x.status === 'approved');
                       return (
-                        <tr key={f.id} className={cn('hover:bg-zinc-50', isLatest && 'bg-primary-50/20')}>
+                        <tr key={f.id} className={cn('hover:bg-zinc-50', isLatestApproved && 'bg-primary-50/20')}>
                           <td className="px-4 py-3.5">
                             <div className="flex items-center gap-2">
                               <span className="font-mono font-semibold text-zinc-900">{f.version}</span>
-                              {isLatest && <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-primary-500 text-white">当前</span>}
+                              {isLatestApproved && <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-primary-500 text-white">当前生效</span>}
                             </div>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <span className={cn(
+                              'inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border',
+                              STATUS_COLOR[f.status]
+                            )}>
+                              {(() => { const S = STATUS_ICON[f.status]; return <S className="w-3 h-3" />; })()}
+                              {STATUS_LABEL[f.status]}
+                            </span>
                           </td>
                           <td className="px-4 py-3.5 text-sm text-zinc-700 font-medium">{f.effectiveMonth}</td>
                           <td className="px-4 py-3.5 text-right font-mono tabular-nums text-zinc-900 font-semibold">{f.value.toFixed(7)}</td>
-                          <td className="px-4 py-3.5 text-sm text-zinc-500">{formatDateTime(f.createdAt)}</td>
-                          <td className="px-4 py-3.5 text-sm text-zinc-500 max-w-[220px] truncate" title={f.note}>
-                            {f.note || '—'}
+                          <td className="px-4 py-3.5 text-xs text-zinc-500">
+                            <div>提交：{f.submittedBy}</div>
+                            {f.reviewedBy && <div className="text-zinc-400">审批：{f.reviewedBy}</div>}
                           </td>
-                          <td className="px-4 py-3.5 text-center">
-                            {!isLatest ? (
-                              <button
-                                onClick={() => handleRemove(f.id, f.label, f.version)}
-                                className="inline-flex items-center gap-1 p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                                title="删除该历史版本"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            ) : (
-                              <span className="text-xs text-zinc-300">当前版本不可删</span>
-                            )}
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center gap-1 justify-end">
+                              {f.status === 'pending' && (
+                                <button
+                                  onClick={() => {
+                                    setActiveTab('pending');
+                                    if (!expandedIds.has(f.id)) toggleExpand(f.id);
+                                  }}
+                                  className="p-1.5 text-zinc-400 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors"
+                                  title="前往审批"
+                                >
+                                  <Send className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {!isLatestApproved && (
+                                <button
+                                  onClick={() => handleRemove(f.id, f.label, f.version)}
+                                  className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                  title="删除该版本"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -282,7 +474,7 @@ export default function FactorConfig() {
 
           {activeTab === 'lookup' && (
             <div className="space-y-4">
-              <div className="card p-4 flex items-center gap-3">
+              <div className="card p-4 flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-zinc-500" />
                   <span className="text-sm font-medium text-zinc-700">查询月份</span>
@@ -294,7 +486,7 @@ export default function FactorConfig() {
                   className="px-3 py-1.5 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
                 />
                 <div className="ml-auto text-xs text-zinc-500">
-                  系统自动匹配该月份及之前最新生效的因子版本
+                  系统自动匹配该月份及之前最新已生效的因子版本
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -347,9 +539,9 @@ export default function FactorConfig() {
           <div className="card p-5 sticky top-6">
             <div className="flex items-center gap-2 mb-1">
               <Plus className="w-4 h-4 text-primary-600" />
-              <h2 className="font-semibold text-zinc-900">发布新版本因子</h2>
+              <h2 className="font-semibold text-zinc-900">提交新版本因子</h2>
             </div>
-            <p className="text-xs text-zinc-500 mb-4">新版本发布后，所有 ≥ 生效月份的新填报记录将自动采用该因子</p>
+            <p className="text-xs text-zinc-500 mb-4">提交后进入待审批，主管审核通过后自动生效</p>
             <div className="space-y-3.5">
               <div>
                 <label className="block text-xs font-medium text-zinc-700 mb-1.5">能源类型</label>
@@ -432,12 +624,15 @@ export default function FactorConfig() {
                 />
               </div>
               <button
-                onClick={handleAdd}
+                onClick={handleSubmit}
                 className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
               >
-                <Plus className="w-4 h-4" />
-                发布 {FACTOR_META[formKey].label}因子新版本
+                <Send className="w-4 h-4" />
+                提交 {FACTOR_META[formKey].label}因子审批
               </button>
+              <p className="text-[11px] text-zinc-400 text-center">
+                提交人：{currentUser} · 审批通过后自动生效
+              </p>
             </div>
           </div>
         </div>

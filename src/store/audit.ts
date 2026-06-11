@@ -47,7 +47,8 @@ export const useAuditStore = create<AuditState>((set, get) => ({
       auditor,
       action: 'approve',
       opinion,
-      timestamp
+      timestamp,
+      previousStatus: emissionData.status,
     };
 
     useEmissionStore.setState({
@@ -83,7 +84,8 @@ export const useAuditStore = create<AuditState>((set, get) => ({
       auditor,
       action: 'reject',
       opinion,
-      timestamp
+      timestamp,
+      previousStatus: emissionData.status,
     };
 
     useEmissionStore.setState({
@@ -123,7 +125,8 @@ export const useAuditStore = create<AuditState>((set, get) => ({
         auditor,
         action: 'approve',
         opinion: '批量审核通过',
-        timestamp
+        timestamp,
+        previousStatus: data?.status,
       };
     });
 
@@ -160,7 +163,8 @@ export const useAuditStore = create<AuditState>((set, get) => ({
       auditor,
       action: 'lock',
       opinion: '管理员锁定该月份数据，不可修改',
-      timestamp
+      timestamp,
+      previousStatus: emissionData.status,
     };
 
     useEmissionStore.setState({
@@ -200,7 +204,8 @@ export const useAuditStore = create<AuditState>((set, get) => ({
         auditor,
         action: 'lock',
         opinion: '批量锁定该月份数据',
-        timestamp
+        timestamp,
+        previousStatus: data?.status,
       };
     });
 

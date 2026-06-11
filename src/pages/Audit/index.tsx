@@ -996,6 +996,28 @@ export default function Audit() {
                                     {record.opinion}
                                   </p>
                                 )}
+                                {record.previousStatus && (
+                                  <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-zinc-400">
+                                    <span className="px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500">
+                                      变更前：{
+                                        record.previousStatus === 'draft' ? '草稿' :
+                                        record.previousStatus === 'pending' ? '待审核' :
+                                        record.previousStatus === 'approved' ? '已通过' :
+                                        record.previousStatus === 'rejected' ? '已退回' :
+                                        record.previousStatus === 'locked' ? '已锁定' : record.previousStatus
+                                      }
+                                    </span>
+                                    <span>→</span>
+                                    <span className="px-1.5 py-0.5 rounded bg-primary-50 text-primary-700">
+                                      变更后：{
+                                        record.action === 'approve' ? '已通过' :
+                                        record.action === 'reject' ? '已退回' :
+                                        record.action === 'lock' ? '已锁定' :
+                                        record.action === 'submit' ? '待审核' : record.action
+                                      }
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           );

@@ -12,6 +12,7 @@ import {
   Users,
   Building,
   SlidersHorizontal,
+  FileArchive,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -34,6 +35,7 @@ const menuItems: MenuItem[] = [
   { key: 'results', label: '核算结果', path: '/results', icon: BarChart3 },
   { key: 'analysis', label: '对比分析', path: '/analysis', icon: TrendingUp },
   { key: 'factor-config', label: '排放因子', path: '/factor-config', icon: SlidersHorizontal },
+  { key: 'report-archive', label: '报告归档', path: '/report-archive', icon: FileArchive },
 ];
 
 const roleOptions: { value: UserRole; label: string; icon: React.ElementType }[] = [
